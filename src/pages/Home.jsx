@@ -13,6 +13,8 @@ const STEPS = [
   { key: 'done', label: 'Done!', pct: 100 },
 ]
 
+const CHUNK_SIZE = 20 * 1024 * 1024 // 20MB chunks
+
 export default function Home() {
   const navigate = useNavigate()
   const fileInputRef = useRef()
@@ -87,30 +89,86 @@ export default function Home() {
     }, 3000)
   }
 
+  const uploadFileInChunks = async (f) => {
+    const fileType = f.type || 'video/mp4'
+
+    // Step 1: start multipart upload
+    const startRes = await fetch('/api/upload-chunk', {
+      method: 'POST',
+      headers: {
+        'x-action': 'start',
+        'x-file-name': f.name,
+        'x-file-type': fileType,
+      },
+    })
+    if (!startRes.ok) throw new Error('Failed to start upload')
+    const { uploadId, key } = await startRes.json()
+
+    const totalChunks = Math.ceil(f.size / CHUNK_SIZE)
+    const parts = []
+
+    // Step 2: upload each chunk
+    for (let i = 0; i < totalChunks; i++) {
+      const start = i * CHUNK_SIZE
+      const end = Math.min(start + CHUNK_SIZE, f.size)
+      const chunk = f.slice(start, end)
+
+      const pct = Math.round(8 + ((i / totalChunks) * 12))
+      setProgress(pct)
+      setStepLabel(`Uploading part ${i + 1} of ${totalChunks}...`)
+
+      const partRes = await fetch('/api/upload-chunk', {
+        method: 'POST',
+        headers: {
+          'x-action': 'part',
+          'x-upload-id': uploadId,
+          'x-key': key,
+          'x-part-number': String(i + 1),
+          'Content-Type': fileType,
+        },
+        body: chunk,
+      })
+
+      if (!partRes.ok) {
+        // abort on failure
+        await fetch('/api/upload-chunk', {
+          method: 'POST',
+          headers: { 'x-action': 'abort', 'x-upload-id': uploadId, 'x-key': key },
+        })
+        throw new Error(`Chunk ${i + 1} upload failed`)
+      }
+
+      const { ETag } = await partRes.json()
+      parts.push({ PartNumber: i + 1, ETag })
+    }
+
+    // Step 3: complete multipart upload
+    setStepLabel('Finalizing upload...')
+    const completeRes = await fetch('/api/upload-chunk', {
+      method: 'POST',
+      headers: {
+        'x-action': 'complete',
+        'x-upload-id': uploadId,
+        'x-key': key,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ parts }),
+    })
+
+    if (!completeRes.ok) throw new Error('Failed to finalize upload')
+    const { publicUrl } = await completeRes.json()
+    return { publicUrl, key }
+  }
+
   const handleSubmit = async () => {
     if (!file) return
     setError('')
     setPhase('uploading')
-    setProgress(8)
-    setStepLabel('Uploading video...')
+    setProgress(5)
+    setStepLabel('Starting upload...')
 
     try {
-      // Upload via Vercel server-side to R2 (no CORS issues)
-      const uploadRes = await fetch('/api/upload-video', {
-        method: 'POST',
-        headers: {
-          'Content-Type': file.type || 'video/mp4',
-          'x-file-name': file.name,
-        },
-        body: file,
-      })
-
-      if (!uploadRes.ok) {
-        const err = await uploadRes.json()
-        throw new Error(err.error || 'Upload failed')
-      }
-
-      const { publicUrl, key } = await uploadRes.json()
+      const { publicUrl, key } = await uploadFileInChunks(file)
 
       setProgress(20)
       setStepLabel('Queuing job...')
@@ -119,7 +177,7 @@ export default function Home() {
       const payload = {
         video_url: publicUrl,
         file_path: key,
-        languages: languages,
+        languages,
         dual_sub: dualSub,
         dual_pair: dualSub ? dualPair : null,
         status: 'queued',
@@ -260,11 +318,7 @@ export default function Home() {
 
               {error && <div className="error-msg">{error}</div>}
 
-              <button
-                className="submit-btn"
-                disabled={!file}
-                onClick={handleSubmit}
-              >
+              <button className="submit-btn" disabled={!file} onClick={handleSubmit}>
                 Generate Subtitles
               </button>
             </div>
@@ -295,9 +349,7 @@ export default function Home() {
               <div className="progress-bar" style={{ width: `${progress}%` }} />
             </div>
             <div className="progress-step">{stepLabel}</div>
-            <div style={{ marginTop: 20, color: 'var(--muted)', fontSize: 13 }}>
-              {file?.name}
-            </div>
+            <div style={{ marginTop: 20, color: 'var(--muted)', fontSize: 13 }}>{file?.name}</div>
           </div>
         </div>
       ) : phase === 'done' && results ? (
@@ -305,7 +357,6 @@ export default function Home() {
           <div className="results-card">
             <h2>Subtitles Ready</h2>
             <p>Download your SRT files or watch directly in your browser.</p>
-
             <div className="download-grid">
               {results.srt_files && results.srt_files.map((item) => (
                 <div className="download-item" key={item.lang}>
@@ -332,13 +383,10 @@ export default function Home() {
                 </div>
               )}
             </div>
-
             <button className="watch-btn" onClick={() => navigate(`/player/${jobId}`)}>
               Watch Movie With Subtitles
             </button>
-            <button className="new-btn" onClick={reset}>
-              Process Another Movie
-            </button>
+            <button className="new-btn" onClick={reset}>Process Another Movie</button>
           </div>
         </div>
       ) : null}
