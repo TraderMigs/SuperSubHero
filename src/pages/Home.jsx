@@ -92,26 +92,25 @@ export default function Home() {
     setError('')
     setPhase('uploading')
     setProgress(8)
-    setStepLabel('Requesting upload slot...')
+    setStepLabel('Uploading video...')
 
     try {
-      const urlRes = await fetch('/api/get-upload-url', {
+      // Upload via Vercel server-side to R2 (no CORS issues)
+      const uploadRes = await fetch('/api/upload-video', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fileName: file.name, fileType: file.type || 'video/mp4' }),
-      })
-      const { signedUrl, publicUrl, key } = await urlRes.json()
-      if (!signedUrl) throw new Error('Failed to get upload URL')
-
-      setProgress(12)
-      setStepLabel('Uploading video to storage...')
-
-      const uploadRes = await fetch(signedUrl, {
-        method: 'PUT',
-        headers: { 'Content-Type': file.type || 'video/mp4' },
+        headers: {
+          'Content-Type': file.type || 'video/mp4',
+          'x-file-name': file.name,
+        },
         body: file,
       })
-      if (!uploadRes.ok) throw new Error(`Upload failed: ${uploadRes.status}`)
+
+      if (!uploadRes.ok) {
+        const err = await uploadRes.json()
+        throw new Error(err.error || 'Upload failed')
+      }
+
+      const { publicUrl, key } = await uploadRes.json()
 
       setProgress(20)
       setStepLabel('Queuing job...')
@@ -320,7 +319,6 @@ export default function Home() {
                   <a className="download-btn" href={item.url} download>Download</a>
                 </div>
               ))}
-
               {results.dual_srt && (
                 <div className="download-item">
                   <div className="download-item-info">
@@ -335,13 +333,9 @@ export default function Home() {
               )}
             </div>
 
-            <button
-              className="watch-btn"
-              onClick={() => navigate(`/player/${jobId}`)}
-            >
+            <button className="watch-btn" onClick={() => navigate(`/player/${jobId}`)}>
               Watch Movie With Subtitles
             </button>
-
             <button className="new-btn" onClick={reset}>
               Process Another Movie
             </button>
