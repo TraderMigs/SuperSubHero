@@ -1,6 +1,6 @@
 {
   "functions": {
-    "api/upload-video.js": {
+    "api/upload-chunk.js": {
       "maxDuration": 300
     },
     "api/trigger-job.js": {
