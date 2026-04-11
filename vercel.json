@@ -1,4 +1,12 @@
 {
+  "functions": {
+    "api/upload-video.js": {
+      "maxDuration": 300
+    },
+    "api/trigger-job.js": {
+      "maxDuration": 300
+    }
+  },
   "rewrites": [
     { "source": "/((?!api/).*)", "destination": "/index.html" }
   ]
