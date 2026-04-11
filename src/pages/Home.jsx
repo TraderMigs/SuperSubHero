@@ -13,7 +13,7 @@ const STEPS = [
   { key: 'done', label: 'Done!', pct: 100 },
 ]
 
-const CHUNK_SIZE = 20 * 1024 * 1024 // 20MB chunks
+const CHUNK_SIZE = 6 * 1024 * 1024 // 6MB chunks for TUS
 
 export default function Home() {
   const navigate = useNavigate()
@@ -89,75 +89,69 @@ export default function Home() {
     }, 3000)
   }
 
-  const uploadFileInChunks = async (f) => {
-    const fileType = f.type || 'video/mp4'
+  const uploadWithTus = async (f) => {
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+    const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+    const ext = f.name.split('.').pop()
+    const fileName = `uploads/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+    const tusEndpoint = `${supabaseUrl}/storage/v1/upload/resumable`
 
-    // Step 1: start multipart upload
-    const startRes = await fetch('/api/upload-chunk', {
+    // Step 1: Create resumable upload
+    const createRes = await fetch(tusEndpoint, {
       method: 'POST',
       headers: {
-        'x-action': 'start',
-        'x-file-name': f.name,
-        'x-file-type': fileType,
+        'Authorization': `Bearer ${supabaseKey}`,
+        'apikey': supabaseKey,
+        'Content-Type': 'application/offset+octet-stream',
+        'Upload-Length': String(f.size),
+        'Upload-Metadata': `bucketName ${btoa('videos')},objectName ${btoa(fileName)},contentType ${btoa(f.type || 'video/mp4')}`,
+        'Tus-Resumable': '1.0.0',
       },
     })
-    if (!startRes.ok) throw new Error('Failed to start upload')
-    const { uploadId, key } = await startRes.json()
 
-    const totalChunks = Math.ceil(f.size / CHUNK_SIZE)
-    const parts = []
+    if (!createRes.ok) {
+      const errText = await createRes.text()
+      throw new Error(`Failed to create upload: ${errText}`)
+    }
 
-    // Step 2: upload each chunk
-    for (let i = 0; i < totalChunks; i++) {
-      const start = i * CHUNK_SIZE
-      const end = Math.min(start + CHUNK_SIZE, f.size)
-      const chunk = f.slice(start, end)
+    const uploadUrl = createRes.headers.get('Location')
+    if (!uploadUrl) throw new Error('No upload URL returned')
 
-      const pct = Math.round(8 + ((i / totalChunks) * 12))
+    // Step 2: Upload chunks
+    let offset = 0
+    let partNum = 0
+    const totalParts = Math.ceil(f.size / CHUNK_SIZE)
+
+    while (offset < f.size) {
+      const chunk = f.slice(offset, offset + CHUNK_SIZE)
+      partNum++
+
+      const pct = Math.round(8 + ((partNum / totalParts) * 12))
       setProgress(pct)
-      setStepLabel(`Uploading part ${i + 1} of ${totalChunks}...`)
+      setStepLabel(`Uploading part ${partNum} of ${totalParts}...`)
 
-      const partRes = await fetch('/api/upload-chunk', {
-        method: 'POST',
+      const patchRes = await fetch(uploadUrl, {
+        method: 'PATCH',
         headers: {
-          'x-action': 'part',
-          'x-upload-id': uploadId,
-          'x-key': key,
-          'x-part-number': String(i + 1),
-          'Content-Type': fileType,
+          'Authorization': `Bearer ${supabaseKey}`,
+          'apikey': supabaseKey,
+          'Content-Type': 'application/offset+octet-stream',
+          'Upload-Offset': String(offset),
+          'Tus-Resumable': '1.0.0',
         },
         body: chunk,
       })
 
-      if (!partRes.ok) {
-        // abort on failure
-        await fetch('/api/upload-chunk', {
-          method: 'POST',
-          headers: { 'x-action': 'abort', 'x-upload-id': uploadId, 'x-key': key },
-        })
-        throw new Error(`Chunk ${i + 1} upload failed`)
+      if (!patchRes.ok) {
+        const errText = await patchRes.text()
+        throw new Error(`Chunk ${partNum} failed: ${errText}`)
       }
 
-      const { ETag } = await partRes.json()
-      parts.push({ PartNumber: i + 1, ETag })
+      offset += chunk.size
     }
 
-    // Step 3: complete multipart upload
-    setStepLabel('Finalizing upload...')
-    const completeRes = await fetch('/api/upload-chunk', {
-      method: 'POST',
-      headers: {
-        'x-action': 'complete',
-        'x-upload-id': uploadId,
-        'x-key': key,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ parts }),
-    })
-
-    if (!completeRes.ok) throw new Error('Failed to finalize upload')
-    const { publicUrl } = await completeRes.json()
-    return { publicUrl, key }
+    const { data: urlData } = supabase.storage.from('videos').getPublicUrl(fileName)
+    return { publicUrl: urlData.publicUrl, filePath: fileName }
   }
 
   const handleSubmit = async () => {
@@ -168,15 +162,15 @@ export default function Home() {
     setStepLabel('Starting upload...')
 
     try {
-      const { publicUrl, key } = await uploadFileInChunks(file)
+      const { publicUrl, filePath } = await uploadWithTus(file)
 
-      setProgress(20)
+      setProgress(22)
       setStepLabel('Queuing job...')
       setPhase('processing')
 
       const payload = {
         video_url: publicUrl,
-        file_path: key,
+        file_path: filePath,
         languages,
         dual_sub: dualSub,
         dual_pair: dualSub ? dualPair : null,
