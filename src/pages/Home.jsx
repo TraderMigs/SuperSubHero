@@ -23,7 +23,7 @@ export default function Home() {
   const [languages, setLanguages] = useState(['en'])
   const [dualSub, setDualSub] = useState(false)
   const [dualPair, setDualPair] = useState(['en', 'es'])
-  const [phase, setPhase] = useState('idle') // idle | uploading | processing | done | error
+  const [phase, setPhase] = useState('idle')
   const [progress, setProgress] = useState(0)
   const [stepLabel, setStepLabel] = useState('')
   const [jobId, setJobId] = useState(null)
@@ -91,30 +91,35 @@ export default function Home() {
     if (!file) return
     setError('')
     setPhase('uploading')
-    setProgress(10)
-    setStepLabel('Uploading video...')
+    setProgress(8)
+    setStepLabel('Requesting upload slot...')
 
     try {
-      const ext = file.name.split('.').pop()
-      const fileName = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
-      const filePath = `uploads/${fileName}`
+      const urlRes = await fetch('/api/get-upload-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fileName: file.name, fileType: file.type || 'video/mp4' }),
+      })
+      const { signedUrl, publicUrl, key } = await urlRes.json()
+      if (!signedUrl) throw new Error('Failed to get upload URL')
 
-      const { error: upErr } = await supabase.storage
-        .from('videos')
-        .upload(filePath, file, { cacheControl: '3600', upsert: false })
+      setProgress(12)
+      setStepLabel('Uploading video to storage...')
 
-      if (upErr) throw upErr
-
-      const { data: urlData } = supabase.storage.from('videos').getPublicUrl(filePath)
-      const videoUrl = urlData.publicUrl
+      const uploadRes = await fetch(signedUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': file.type || 'video/mp4' },
+        body: file,
+      })
+      if (!uploadRes.ok) throw new Error(`Upload failed: ${uploadRes.status}`)
 
       setProgress(20)
       setStepLabel('Queuing job...')
       setPhase('processing')
 
       const payload = {
-        video_url: videoUrl,
-        file_path: filePath,
+        video_url: publicUrl,
+        file_path: key,
         languages: languages,
         dual_sub: dualSub,
         dual_pair: dualSub ? dualPair : null,
@@ -133,6 +138,13 @@ export default function Home() {
       setJobId(job.id)
       setProgress(25)
       setStepLabel('Job queued...')
+
+      await fetch('/api/trigger-job', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ job_id: job.id }),
+      })
+
       pollJob(job.id)
 
     } catch (err) {
