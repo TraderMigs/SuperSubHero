@@ -428,10 +428,7 @@ export default function Home() {
               <div className="preview-line">{previewLine.en}</div>
               {lang2 && <div className="preview-line lang2">{previewLine.th}</div>}
             </div>
-            <div className="style-toggle">
-              <button className={`style-btn ${previewStyle === 'transparent' ? 'active' : ''}`} onClick={() => setPreviewStyle('transparent')}>Original Text</button>
-              <button className={`style-btn ${previewStyle === 'black' ? 'active' : ''}`} onClick={() => setPreviewStyle('black')}>Black Background</button>
-            </div>
+
 
             <div className="divider" />
 
