@@ -29,16 +29,36 @@ export default async function handler(req, res) {
       return res.status(200).json({ subtitles: [], source: 'subdl' })
     }
 
-    const subtitles = data.subtitles.slice(0, 20).map(s => ({
+    const episodeNum = episode ? parseInt(episode) : null
+
+    let subtitles = data.subtitles.map(s => ({
       id: s.sd_id || s.url,
       name: s.release_name || s.name || 'Unknown release',
       url: s.url,
       download_link: s.url ? `https://dl.subdl.com${s.url}` : null,
       language: s.lang || language,
       author: s.author || null,
+      season: s.season || null,
+      episode: s.episode || null,
+      full_season: s.full_season || false,
     }))
 
-    return res.status(200).json({ subtitles, source: 'subdl' })
+    // Sort: exact episode match first, full season packs last
+    if (episodeNum) {
+      subtitles = subtitles.sort((a, b) => {
+        const aExact = a.episode === episodeNum
+        const bExact = b.episode === episodeNum
+        const aFull = a.full_season || a.episode === 0
+        const bFull = b.full_season || b.episode === 0
+        if (aExact && !bExact) return -1
+        if (!aExact && bExact) return 1
+        if (aFull && !bFull) return 1
+        if (!aFull && bFull) return -1
+        return 0
+      })
+    }
+
+    return res.status(200).json({ subtitles: subtitles.slice(0, 20), source: 'subdl' })
   } catch (err) {
     console.error('Subtitles error:', err)
     return res.status(500).json({ error: err.message })
