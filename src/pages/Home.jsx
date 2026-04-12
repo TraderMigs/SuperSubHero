@@ -420,9 +420,9 @@ export default function Home() {
 
             {/* PREVIEW */}
             <div style={{ fontSize: 11, color: 'var(--muted)', fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Preview</div>
-            <div className={`preview-box ${previewStyle === 'black' ? 'bg-black' : ''}`}>
-              <div className={`preview-line ${previewStyle === 'black' ? 'bg-black' : ''}`}>{previewLine.en}</div>
-              {lang2 && <div className={`preview-line lang2 ${previewStyle === 'black' ? 'bg-black' : ''}`}>{previewLine.th}</div>}
+            <div className={`preview-box ${previewStyle === 'black' ? 'bg-black' : 'bg-transparent'}`}>
+              <div className="preview-line">{previewLine.en}</div>
+              {lang2 && <div className="preview-line lang2">{previewLine.th}</div>}
             </div>
             <div className="style-toggle">
               <button className={`style-btn ${previewStyle === 'transparent' ? 'active' : ''}`} onClick={() => setPreviewStyle('transparent')}>Original Text</button>
