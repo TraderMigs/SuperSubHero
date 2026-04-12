@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import Home from './pages/Home.jsx'
 
@@ -44,13 +44,11 @@ export default function App() {
         alignItems: 'center',
         justifyContent: 'center',
         fontFamily: "'Instrument Sans', sans-serif",
-        gap: 24,
+        gap: 20,
         padding: 24,
       }}>
-        <div style={{ fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: 28, color: '#eeeef5', letterSpacing: '-0.03em' }}>
-          Super<span style={{ color: '#c8f135' }}>Sub</span>Hero
-        </div>
-        <div style={{ fontSize: 13, color: '#666680', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Private Access</div>
+        <img src="/logo.png" alt="SuperSubHero" style={{ height: 120, width: 'auto' }} />
+        <div style={{ fontSize: 12, color: '#666680', letterSpacing: '0.1em', textTransform: 'uppercase' }}>Private Access</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10, width: '100%', maxWidth: 320 }}>
           <input
             type="password"
