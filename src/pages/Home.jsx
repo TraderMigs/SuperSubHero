@@ -360,6 +360,8 @@ export default function Home() {
                 {subResultsL1.slice(0, 8).map((s, i) => (
                   <div key={i} className={`sub-result-item ${selectedSubL1?.id === s.id ? 'selected' : ''}`} onClick={() => { setSelectedSubL1(s); loadSubContent(s, setLoadingL1, setBlocksL1, setErrorL1) }}>
                     <div className="sub-result-name">{s.name}</div>
+                    {s.episode > 0 && <div className="sub-result-meta">E{s.episode}</div>}
+                    {(s.full_season || s.episode === 0) && <div className="sub-result-meta" style={{color:'var(--muted)'}}>Full</div>}
                   </div>
                 ))}
               </div>
@@ -409,6 +411,8 @@ export default function Home() {
                     {subResultsL2.slice(0, 8).map((s, i) => (
                       <div key={i} className={`sub-result-item ${selectedSubL2?.id === s.id ? 'selected' : ''}`} onClick={() => { setSelectedSubL2(s); loadSubContent(s, setLoadingL2, setBlocksL2, setErrorL2) }}>
                         <div className="sub-result-name">{s.name}</div>
+                        {s.episode > 0 && <div className="sub-result-meta">E{s.episode}</div>}
+                        {(s.full_season || s.episode === 0) && <div className="sub-result-meta" style={{color:'var(--muted)'}}>Full</div>}
                       </div>
                     ))}
                   </div>
