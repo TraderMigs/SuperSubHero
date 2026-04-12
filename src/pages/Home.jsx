@@ -444,6 +444,29 @@ export default function Home() {
               ↓ Download Merged ({lang2 ? `${lang1} + ${lang2}` : 'select 2nd lang'})
             </button>
 
+
+            {/* VPN AFFILIATES */}
+            <div className="vpn-strip">
+              <div className="vpn-label">🔒 Watch without limits</div>
+              <div className="vpn-cards">
+                <a href="https://nordvpn.com/" target="_blank" rel="noreferrer sponsored" className="vpn-card">
+                  <div className="vpn-name nord">Nord<span>VPN</span></div>
+                  <div className="vpn-pitch">Best overall</div>
+                  <div className="vpn-cta">Get Deal →</div>
+                </a>
+                <a href="https://www.expressvpn.com/" target="_blank" rel="noreferrer sponsored" className="vpn-card">
+                  <div className="vpn-name express">Express<span>VPN</span></div>
+                  <div className="vpn-pitch">Fastest speeds</div>
+                  <div className="vpn-cta">Get Deal →</div>
+                </a>
+                <a href="https://surfshark.com/" target="_blank" rel="noreferrer sponsored" className="vpn-card">
+                  <div className="vpn-name surf">Surf<span>shark</span></div>
+                  <div className="vpn-pitch">Best value</div>
+                  <div className="vpn-cta">Get Deal →</div>
+                </a>
+              </div>
+            </div>
+
             <div className="fallback-link">
               Can't find it? Try <a href="https://www.subtitlecat.com" target="_blank" rel="noreferrer">SubtitleCat</a> or <a href="https://subdl.com" target="_blank" rel="noreferrer">SubDL</a> manually.
             </div>
