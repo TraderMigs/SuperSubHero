@@ -101,7 +101,7 @@ export default function Home() {
         setResults(data.subtitles)
       }
     } catch (err) {
-      setError(err.message === 'not_found' ? 'not_found' : err.message)
+      setError(err.message)
     } finally {
       setFetching(false)
     }
