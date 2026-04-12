@@ -14,6 +14,11 @@
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
+html, body {
+  overflow-x: hidden;
+  max-width: 100%;
+}
+
 body {
   background: var(--bg);
   color: var(--text);
@@ -368,6 +373,8 @@ h1, h2, h3, h4 {
   flex-direction: column;
   gap: 10px;
   padding-top: 4px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .controls-title {
@@ -527,6 +534,8 @@ h1, h2, h3, h4 {
   margin-bottom: 5px;
   gap: 8px;
   min-height: 44px;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .sub-result-item:hover { border-color: var(--accent2); }
@@ -595,6 +604,7 @@ h1, h2, h3, h4 {
 
 .vpn-card {
   flex: 1;
+  min-width: 90px;
   display: flex;
   flex-direction: column;
   align-items: center;
