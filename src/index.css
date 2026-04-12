@@ -571,3 +571,78 @@ h1, h2, h3, h4 {
   .result-badge { display: none; }
   .type-btn { font-size: 12px; padding: 10px 6px; }
 }
+
+/* VPN AFFILIATE STRIP */
+.vpn-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.vpn-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  text-align: center;
+}
+
+.vpn-cards {
+  display: flex;
+  gap: 6px;
+}
+
+.vpn-card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 6px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  text-decoration: none;
+  transition: all 0.15s;
+  cursor: pointer;
+}
+
+.vpn-card:hover {
+  border-color: var(--accent);
+  background: rgba(200,241,53,0.04);
+  transform: translateY(-1px);
+}
+
+.vpn-name {
+  font-family: 'Syne', sans-serif;
+  font-weight: 800;
+  font-size: 11px;
+  color: var(--text);
+  letter-spacing: -0.01em;
+  text-align: center;
+}
+
+.vpn-name span { color: var(--accent); }
+.vpn-name.nord span { color: #4687ff; }
+.vpn-name.express span { color: #da3940; }
+.vpn-name.surf span { color: #1fd5b5; }
+
+.vpn-pitch {
+  font-size: 10px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.vpn-cta {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--accent);
+  font-family: 'Syne', sans-serif;
+  letter-spacing: 0.02em;
+}
+
+@media (max-width: 480px) {
+  .vpn-cards { flex-direction: column; }
+  .vpn-card { flex-direction: row; justify-content: space-between; padding: 10px 14px; }
+}
