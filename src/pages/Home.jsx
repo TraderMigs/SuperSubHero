@@ -347,7 +347,7 @@ export default function Home() {
                   onClick={() => translateFallback(lang1, setBlocksL1, setErrorL1, setTranslatingL1)}
                   style={{ background: 'rgba(123,94,167,0.4)', fontSize: 12 }}
                 >
-                  ✨ AI Translate from English (~$0.01)
+                  ✨ AI Translate from English
                 </button>
               </div>
             )}
@@ -389,7 +389,7 @@ export default function Home() {
                       onClick={() => translateFallback(lang2, setBlocksL2, setErrorL2, setTranslatingL2)}
                       style={{ background: 'rgba(123,94,167,0.4)', fontSize: 12 }}
                     >
-                      ✨ AI Translate from English (~$0.01)
+                      ✨ AI Translate from English
                     </button>
                   </div>
                 )}
