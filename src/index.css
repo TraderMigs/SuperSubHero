@@ -343,7 +343,6 @@ h1, h2, h3, h4 {
 
 /* PREVIEW BOX */
 .preview-box {
-  background: #000;
   border-radius: 10px;
   padding: 24px 16px;
   text-align: center;
@@ -352,24 +351,34 @@ h1, h2, h3, h4 {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 2px;
+  gap: 6px;
   position: relative;
   overflow: hidden;
   border: 1px solid var(--border);
+  background: #1a1a2e;
+}
+
+.preview-box.bg-transparent {
+  background: linear-gradient(135deg, #1a1a2e 25%, #16213e 75%);
+}
+
+.preview-box.bg-black {
+  background: #000;
 }
 
 .preview-box.bg-black .preview-line {
-  background: rgba(0,0,0,0.85);
-  padding: 3px 10px;
-  border-radius: 3px;
+  background: rgba(0,0,0,0.92);
+  padding: 5px 16px;
+  border-radius: 2px;
+  display: inline-block;
 }
 
 .preview-line {
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 500;
-  line-height: 1.4;
+  line-height: 1.5;
   color: #fff;
-  text-shadow: 1px 1px 2px rgba(0,0,0,0.9);
+  text-shadow: 1px 1px 3px rgba(0,0,0,1);
 }
 
 .preview-line.lang2 { color: var(--accent); }
