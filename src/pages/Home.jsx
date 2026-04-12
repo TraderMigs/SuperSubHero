@@ -94,14 +94,17 @@ export default function Home() {
       if (contentType === 'tv' && episode) params.append('episode', episode)
       const resp = await fetch(`/api/subtitles?${params}`)
       const data = await resp.json()
-      if (data.error) throw new Error(data.error)
-      if (!data.subtitles?.length) {
+      if (data.error) {
         setError('not_found')
-      } else {
-        setResults(data.subtitles)
+        return
       }
+      if (!data.subtitles || data.subtitles.length === 0) {
+        setError('not_found')
+        return
+      }
+      setResults(data.subtitles)
     } catch (err) {
-      setError(err.message)
+      setError('not_found')
     } finally {
       setFetching(false)
     }
@@ -307,7 +310,7 @@ export default function Home() {
                   {translatingL1 && <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>This takes ~30 seconds for a full movie</div>}
                 </div>
               )}
-              {errorL1 && errorL1 !== 'not_found' && <div className="status-bar error">{errorL1}</div>}
+              {errorL1 && errorL1 !== 'not_found' && blocksL1.length === 0 && <div className="status-bar error">{errorL1}</div>}
               {blocksL1.map((block, idx) => (
                 <div key={idx} className="sub-line">
                   <div className="sub-time">{block.start?.slice(0, 8)}</div>
