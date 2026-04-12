@@ -43,7 +43,7 @@ h1, h2, h3, h4 {
 }
 
 .nav-logo-wrap { display: flex; align-items: center; }
-.nav-logo-img { height: 40px; width: auto; display: block; }
+.nav-logo-img { height: 52px; width: auto; display: block; }
 .nav-sub { font-size: 11px; color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; }
 
 /* HERO */
