@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef } from 'react'
+import React, { useState, useCallback } from 'react'
 import { LANGUAGES } from '../lib/languages.js'
 import { parseSrt, buildSrt, mergeSrts, downloadFile } from '../lib/srt.js'
 
@@ -35,6 +35,9 @@ export default function Home() {
   const [errorL1, setErrorL1] = useState('')
   const [errorL2, setErrorL2] = useState('')
 
+  const [translatingL1, setTranslatingL1] = useState(false)
+  const [translatingL2, setTranslatingL2] = useState(false)
+
   const [previewStyle, setPreviewStyle] = useState('transparent')
   const previewLine = PREVIEW_LINES[1]
 
@@ -64,7 +67,7 @@ export default function Home() {
     }
   }
 
-  const handleSelectTitle = async (title) => {
+  const handleSelectTitle = (title) => {
     setSelectedTitle(title)
     setSearchResults([])
     setBlocksL1([])
@@ -93,12 +96,12 @@ export default function Home() {
       const data = await resp.json()
       if (data.error) throw new Error(data.error)
       if (!data.subtitles?.length) {
-        setError('No subtitles found for this language. Try another.')
+        setError('not_found')
       } else {
         setResults(data.subtitles)
       }
     } catch (err) {
-      setError(err.message)
+      setError(err.message === 'not_found' ? 'not_found' : err.message)
     } finally {
       setFetching(false)
     }
@@ -123,6 +126,60 @@ export default function Home() {
       setError(err.message)
     } finally {
       setLoading(false)
+    }
+  }
+
+  // Auto-translate fallback: get EN subs then translate to target language
+  const translateFallback = async (targetLangCode, setBlocks, setError, setTranslating) => {
+    setTranslating(true)
+    setError('')
+    setBlocks([])
+
+    try {
+      // Step 1: fetch English subtitles list
+      const params = new URLSearchParams({ language: 'EN', type: contentType })
+      if (selectedTitle.sd_id) params.append('sd_id', selectedTitle.sd_id)
+      else if (selectedTitle.imdb_id) params.append('imdb_id', selectedTitle.imdb_id)
+      else if (selectedTitle.tmdb_id) params.append('tmdb_id', selectedTitle.tmdb_id)
+      if (contentType === 'tv' && season) params.append('season', season)
+      if (contentType === 'tv' && episode) params.append('episode', episode)
+
+      const listResp = await fetch(`/api/subtitles?${params}`)
+      const listData = await listResp.json()
+
+      if (!listData.subtitles?.length) throw new Error('No English subtitles found to translate from')
+
+      // Step 2: download first English sub
+      const fetchResp = await fetch('/api/fetch-sub', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: listData.subtitles[0].url }),
+      })
+      const fetchData = await fetchResp.json()
+      if (fetchData.error) throw new Error(fetchData.error)
+
+      // Step 3: translate to target language
+      const targetLang = LANGUAGES.find(l => l.code === targetLangCode)?.label || targetLangCode
+      const translateResp = await fetch('/api/translate-srt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          srtContent: fetchData.content,
+          targetLanguage: targetLang,
+          targetLanguageCode: targetLangCode,
+        }),
+      })
+      const translateData = await translateResp.json()
+      if (translateData.error) throw new Error(translateData.error)
+
+      const parsed = parseSrt(translateData.content)
+      if (!parsed.length) throw new Error('Translation produced empty result')
+      setBlocks(parsed)
+
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setTranslating(false)
     }
   }
 
@@ -236,20 +293,21 @@ export default function Home() {
               {blocksL1.length > 0 && <div className="panel-lang">{lang1Label} · {blocksL1.length} lines</div>}
             </div>
             <div className="panel-body">
-              {blocksL1.length === 0 && !loadingL1 && (
+              {blocksL1.length === 0 && !loadingL1 && !translatingL1 && (
                 <div className="panel-empty">
                   <div className="panel-empty-icon">📄</div>
                   <div>Subtitle text will appear here</div>
                   <div style={{ fontSize: 11, marginTop: 4 }}>Select a subtitle from the center panel</div>
                 </div>
               )}
-              {loadingL1 && (
+              {(loadingL1 || translatingL1) && (
                 <div className="panel-empty">
                   <div className="spinner" style={{ width: 24, height: 24, borderWidth: 3 }} />
-                  <div>Loading subtitle...</div>
+                  <div>{translatingL1 ? `Translating to ${lang1Label}...` : 'Loading subtitle...'}</div>
+                  {translatingL1 && <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>This takes ~30 seconds for a full movie</div>}
                 </div>
               )}
-              {errorL1 && <div className="status-bar error">{errorL1}</div>}
+              {errorL1 && errorL1 !== 'not_found' && <div className="status-bar error">{errorL1}</div>}
               {blocksL1.map((block, idx) => (
                 <div key={idx} className="sub-line">
                   <div className="sub-time">{block.start?.slice(0, 8)}</div>
@@ -270,14 +328,28 @@ export default function Home() {
 
             {/* LANG 1 */}
             <div style={{ fontSize: 11, color: 'var(--muted)', fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Primary Language</div>
-            <select className="lang-select" value={lang1} onChange={e => { setLang1(e.target.value); setBlocksL1([]); setSubResultsL1([]); setSelectedSubL1(null) }}>
+            <select className="lang-select" value={lang1} onChange={e => { setLang1(e.target.value); setBlocksL1([]); setSubResultsL1([]); setSelectedSubL1(null); setErrorL1('') }}>
               {LANGUAGES.map(l => <option key={l.code} value={l.code}>{l.label}</option>)}
             </select>
             <button className="fetch-btn" onClick={() => fetchSubtitleList(lang1, setSubResultsL1, setFetchingL1, setErrorL1)} disabled={fetchingL1 || !selectedTitle}>
-              {fetchingL1 ? 'Searching...' : `Find ${lang1} Subtitles`}
+              {fetchingL1 ? 'Searching...' : `Find ${lang1Label} Subtitles`}
             </button>
 
-            {errorL1 && !subResultsL1.length && <div className="status-bar error" style={{ fontSize: 11 }}>{errorL1}</div>}
+            {/* NOT FOUND — show translate fallback option */}
+            {errorL1 === 'not_found' && !blocksL1.length && !translatingL1 && (
+              <div style={{ background: 'rgba(123,94,167,0.1)', border: '1px solid rgba(123,94,167,0.3)', borderRadius: 8, padding: '10px 12px' }}>
+                <div style={{ fontSize: 12, color: '#c4a8f0', marginBottom: 8 }}>No {lang1Label} subtitles found in database.</div>
+                <button
+                  className="fetch-btn"
+                  onClick={() => translateFallback(lang1, setBlocksL1, setErrorL1, setTranslatingL1)}
+                  style={{ background: 'rgba(123,94,167,0.4)', fontSize: 12 }}
+                >
+                  ✨ AI Translate from English (~$0.01)
+                </button>
+              </div>
+            )}
+
+            {errorL1 && errorL1 !== 'not_found' && !subResultsL1.length && <div className="status-bar error" style={{ fontSize: 11 }}>{errorL1}</div>}
 
             {subResultsL1.length > 0 && (
               <div>
@@ -294,7 +366,7 @@ export default function Home() {
 
             {/* LANG 2 */}
             <div style={{ fontSize: 11, color: 'var(--muted)', fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Second Language (Optional)</div>
-            <select className="lang-select" value={lang2} onChange={e => { setLang2(e.target.value); setBlocksL2([]); setSubResultsL2([]); setSelectedSubL2(null) }}>
+            <select className="lang-select" value={lang2} onChange={e => { setLang2(e.target.value); setBlocksL2([]); setSubResultsL2([]); setSelectedSubL2(null); setErrorL2('') }}>
               <option value="">— None (single language) —</option>
               {LANGUAGES.filter(l => l.code !== lang1).map(l => <option key={l.code} value={l.code}>{l.label}</option>)}
             </select>
@@ -302,10 +374,31 @@ export default function Home() {
             {lang2 && (
               <>
                 <button className="fetch-btn" onClick={() => fetchSubtitleList(lang2, setSubResultsL2, setFetchingL2, setErrorL2)} disabled={fetchingL2 || !selectedTitle}>
-                  {fetchingL2 ? 'Searching...' : `Find ${lang2} Subtitles`}
+                  {fetchingL2 ? 'Searching...' : `Find ${lang2Label} Subtitles`}
                 </button>
 
-                {errorL2 && !subResultsL2.length && <div className="status-bar error" style={{ fontSize: 11 }}>{errorL2}</div>}
+                {/* NOT FOUND — show translate fallback */}
+                {errorL2 === 'not_found' && !blocksL2.length && !translatingL2 && (
+                  <div style={{ background: 'rgba(123,94,167,0.1)', border: '1px solid rgba(123,94,167,0.3)', borderRadius: 8, padding: '10px 12px' }}>
+                    <div style={{ fontSize: 12, color: '#c4a8f0', marginBottom: 8 }}>No {lang2Label} subtitles found in database.</div>
+                    <button
+                      className="fetch-btn"
+                      onClick={() => translateFallback(lang2, setBlocksL2, setErrorL2, setTranslatingL2)}
+                      style={{ background: 'rgba(123,94,167,0.4)', fontSize: 12 }}
+                    >
+                      ✨ AI Translate from English (~$0.01)
+                    </button>
+                  </div>
+                )}
+
+                {(loadingL2 || translatingL2) && (
+                  <div className="status-bar loading">
+                    <div className="spinner" />
+                    {translatingL2 ? `Translating to ${lang2Label}...` : 'Loading...'}
+                  </div>
+                )}
+
+                {errorL2 && errorL2 !== 'not_found' && !subResultsL2.length && <div className="status-bar error" style={{ fontSize: 11 }}>{errorL2}</div>}
 
                 {subResultsL2.length > 0 && (
                   <div>
@@ -362,20 +455,21 @@ export default function Home() {
                   <div style={{ fontSize: 11, marginTop: 4 }}>Optional — for dual-language merged SRT</div>
                 </div>
               )}
-              {lang2 && blocksL2.length === 0 && !loadingL2 && (
+              {lang2 && blocksL2.length === 0 && !loadingL2 && !translatingL2 && (
                 <div className="panel-empty">
                   <div className="panel-empty-icon">📄</div>
                   <div>Second subtitle will appear here</div>
                   <div style={{ fontSize: 11, marginTop: 4 }}>Find and select a {lang2Label} release</div>
                 </div>
               )}
-              {loadingL2 && (
+              {(loadingL2 || translatingL2) && (
                 <div className="panel-empty">
                   <div className="spinner" style={{ width: 24, height: 24, borderWidth: 3 }} />
-                  <div>Loading subtitle...</div>
+                  <div>{translatingL2 ? `Translating to ${lang2Label}...` : 'Loading subtitle...'}</div>
+                  {translatingL2 && <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>~30 seconds for a full movie</div>}
                 </div>
               )}
-              {errorL2 && blocksL2.length === 0 && <div className="status-bar error">{errorL2}</div>}
+              {errorL2 && errorL2 !== 'not_found' && blocksL2.length === 0 && <div className="status-bar error">{errorL2}</div>}
               {blocksL2.map((block, idx) => (
                 <div key={idx} className="sub-line">
                   <div className="sub-time">{block.start?.slice(0, 8)}</div>
