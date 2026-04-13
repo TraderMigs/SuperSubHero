@@ -631,7 +631,7 @@ h1, h2, h3, h4 {
 .vpn-name {
   font-family: 'Syne', sans-serif;
   font-weight: 800;
-  font-size: 11px;
+  font-size: 9px;
   color: var(--text);
   letter-spacing: -0.01em;
   text-align: center;
