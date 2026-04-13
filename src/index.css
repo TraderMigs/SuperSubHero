@@ -620,6 +620,7 @@ h1, h2, h3, h4 {
   transition: all 0.15s;
   cursor: pointer;
   box-sizing: border-box;
+  overflow: hidden;
 }
 
 .vpn-card:hover {
@@ -631,7 +632,7 @@ h1, h2, h3, h4 {
 .vpn-name {
   font-family: 'Syne', sans-serif;
   font-weight: 800;
-  font-size: 9px;
+  font-size: 8px;
   color: var(--text);
   letter-spacing: -0.01em;
   text-align: center;
