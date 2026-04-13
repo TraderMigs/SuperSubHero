@@ -56,7 +56,7 @@ SELF-CHECK PROCESS — before returning your answer:
           { role: 'user', content: batch }
         ],
         temperature: 0.1,
-        max_tokens: 6000,
+        max_tokens: 16000,
       }),
     })
 
@@ -76,7 +76,7 @@ SELF-CHECK PROCESS — before returning your answer:
 
     const result = [...lines]
     textLines.forEach((item, i) => {
-      result[item.idx] = trimmedTranslated[i] || item.text
+      result[item.idx] = trimmedTranslated[i] || ''
     })
 
     return res.status(200).json({
