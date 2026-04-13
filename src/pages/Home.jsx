@@ -1,6 +1,6 @@
 import React, { useState, useCallback } from 'react'
 import { LANGUAGES } from '../lib/languages.js'
-import { parseSrt, buildSrt, mergeSrts, downloadFile } from '../lib/srt.js'
+import { parseSrt, buildSrt, mergeSrts, downloadFile, applyOffset } from '../lib/srt.js'
 
 const PREVIEW_LINES = [
   { en: "I'll be back.", th: 'ฉันจะกลับมา' },
@@ -96,6 +96,8 @@ export default function Home() {
 
   const [translatingL1, setTranslatingL1] = useState(false)
   const [translatingL2, setTranslatingL2] = useState(false)
+
+  const [offsetMs, setOffsetMs] = useState(0)
 
   const [previewStyle] = useState('transparent')
   const previewLine = PREVIEW_LINES[1]
@@ -242,14 +244,14 @@ export default function Home() {
 
   const handleDownloadSingle = () => {
     if (!blocksL1.length) return
-    const srt = buildSrt(blocksL1)
+    const srt = buildSrt(applyOffset(blocksL1, offsetMs))
     const title = selectedTitle?.title?.replace(/[^a-z0-9]/gi, '_') || 'subtitles'
     downloadFile(srt, `${title}_${lang1}.srt`)
   }
 
   const handleDownloadMerged = () => {
     if (!blocksL1.length || !blocksL2.length) return
-    const merged = mergeSrts(blocksL1, blocksL2)
+    const merged = mergeSrts(applyOffset(blocksL1, offsetMs), applyOffset(blocksL2, offsetMs))
     const srt = buildSrt(merged)
     const title = selectedTitle?.title?.replace(/[^a-z0-9]/gi, '_') || 'subtitles'
     downloadFile(srt, `${title}_${lang1}_${lang2}_merged.srt`)
@@ -436,6 +438,27 @@ export default function Home() {
             </div>
 
             <div className="divider" />
+
+
+            {/* SYNC OFFSET */}
+            <div className="ctrl-label">Sync Adjustment</div>
+            <div className="sync-wrap">
+              <input
+                type="range"
+                min="-10000"
+                max="10000"
+                step="100"
+                value={offsetMs}
+                onChange={e => setOffsetMs(Number(e.target.value))}
+                className="sync-slider"
+              />
+              <div className="sync-display">
+                <button className="sync-reset" onClick={() => setOffsetMs(0)} title="Reset">↺</button>
+                <span className={`sync-value ${offsetMs > 0 ? 'delay' : offsetMs < 0 ? 'advance' : ''}`}>
+                  {offsetMs === 0 ? 'No offset' : offsetMs > 0 ? `+${(offsetMs/1000).toFixed(1)}s delay` : `${(offsetMs/1000).toFixed(1)}s advance`}
+                </span>
+              </div>
+            </div>
 
             <button className="dl-btn" onClick={handleDownloadSingle} disabled={!blocksL1.length}>
               ↓ Download Single ({lang1Label})
