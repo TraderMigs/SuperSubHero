@@ -106,6 +106,8 @@ export default function Home() {
   const [videoSpeed, setVideoSpeed] = useState(1)
   const [liveOffset, setLiveOffset] = useState(0)
   const [currentSubText, setCurrentSubText] = useState('')
+  const [currentSubText2, setCurrentSubText2] = useState('')
+  const [currentLineIndex, setCurrentLineIndex] = useState(-1)
   const videoRef = useRef(null)
   const animFrameRef = useRef(null)
 
@@ -277,26 +279,27 @@ export default function Home() {
     if (!videoUrl) return
     const video = videoRef.current
     if (!video) return
+    const toMs = (ts) => {
+      if (!ts) return 0
+      const m = ts.match(/(\d{2}):(\d{2}):(\d{2})[,.]?(\d{3})?/)
+      if (!m) return 0
+      return parseInt(m[1])*3600000 + parseInt(m[2])*60000 + parseInt(m[3])*1000 + parseInt(m[4]||0)
+    }
     const tick = () => {
       const t = video.currentTime * 1000
       const offset = offsetMs + liveOffset
       const adjustedT = t - offset
-      const allBlocks = [...blocksL1]
-      const match = allBlocks.find(b => {
-        const toMs = (ts) => {
-          if (!ts) return 0
-          const m = ts.match(/(\d{2}):(\d{2}):(\d{2})[,.]?(\d{3})?/)
-          if (!m) return 0
-          return parseInt(m[1])*3600000 + parseInt(m[2])*60000 + parseInt(m[3])*1000 + parseInt(m[4]||0)
-        }
-        return adjustedT >= toMs(b.start) && adjustedT <= toMs(b.end)
-      })
-      setCurrentSubText(match ? match.text : '')
+      const matchIdx = blocksL1.findIndex(b => adjustedT >= toMs(b.start) && adjustedT <= toMs(b.end))
+      const match1 = matchIdx >= 0 ? blocksL1[matchIdx] : null
+      const match2 = blocksL2.length > 0 ? blocksL2.find(b => adjustedT >= toMs(b.start) && adjustedT <= toMs(b.end)) : null
+      setCurrentSubText(match1 ? match1.text : '')
+      setCurrentSubText2(match2 ? match2.text : '')
+      setCurrentLineIndex(matchIdx)
       animFrameRef.current = requestAnimationFrame(tick)
     }
     animFrameRef.current = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(animFrameRef.current)
-  }, [videoUrl, blocksL1, offsetMs, liveOffset])
+  }, [videoUrl, blocksL1, blocksL2, offsetMs, liveOffset])
 
   const handleDownloadSingle = () => {
     if (!blocksL1.length) return
@@ -600,11 +603,19 @@ export default function Home() {
                   controls
                   className="video-el"
                 />
-                {currentSubText && (
+                {(currentSubText || currentSubText2) && (
                   <div className="video-sub-overlay">
-                    {currentSubText.split('\n').map((line, i) => (
+                    {currentSubText && currentSubText.split('\n').map((line, i) => (
                       <div key={i} className="video-sub-line">{line}</div>
                     ))}
+                    {currentSubText2 && currentSubText2.split('\n').map((line, i) => (
+                      <div key={`l2-${i}`} className="video-sub-line lang2">{line}</div>
+                    ))}
+                  </div>
+                )}
+                {blocksL1.length > 0 && (
+                  <div className="video-line-counter">
+                    {currentLineIndex >= 0 ? `Line ${currentLineIndex + 1} of ${blocksL1.length}` : `0 of ${blocksL1.length}`}
                   </div>
                 )}
               </div>
