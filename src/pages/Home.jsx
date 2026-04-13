@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react'
+import React, { useState, useCallback, useRef, useEffect } from 'react'
 import { LANGUAGES } from '../lib/languages.js'
 import { parseSrt, buildSrt, mergeSrts, downloadFile, applyOffset } from '../lib/srt.js'
 
@@ -63,6 +63,96 @@ function CollapsiblePanel({ title, langLabel, blocks, loading, translating, erro
           ))}
         </div>
       )}
+
+      {/* VIDEO PLAYER */}
+      {selectedTitle && blocksL1.length > 0 && (
+        <div className="video-section">
+          <div className="video-section-title">🎬 Watch with Subtitles</div>
+
+          {!videoFile ? (
+            <div
+              className={`video-dropzone ${videoDragging ? 'dragging' : ''}`}
+              onDragOver={e => { e.preventDefault(); setVideoDragging(true) }}
+              onDragLeave={() => setVideoDragging(false)}
+              onDrop={handleVideoDrop}
+              onClick={() => document.getElementById('video-file-input').click()}
+            >
+              <div className="video-drop-icon">▶</div>
+              <div className="video-drop-text">Drop your video file here</div>
+              <div className="video-drop-sub">or click to browse · MP4, MKV, WebM</div>
+              <input
+                id="video-file-input"
+                type="file"
+                accept="video/*"
+                style={{ display: 'none' }}
+                onChange={e => handleVideoFile(e.target.files[0])}
+              />
+            </div>
+          ) : (
+            <div className="video-player-wrap">
+              <div className="video-container">
+                <video
+                  ref={videoRef}
+                  src={videoUrl}
+                  controls
+                  className="video-el"
+                />
+                {currentSubText && (
+                  <div className="video-sub-overlay">
+                    {currentSubText.split('\n').map((line, i) => (
+                      <div key={i} className="video-sub-line">{line}</div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="video-controls-bar">
+                <div className="video-ctrl-group">
+                  <div className="video-ctrl-label">Speed</div>
+                  <div className="video-speed-btns">
+                    {[0.5, 0.75, 1, 1.25, 1.5, 2].map(s => (
+                      <button
+                        key={s}
+                        className={`video-speed-btn ${videoSpeed === s ? 'active' : ''}`}
+                        onClick={() => handleVideoSpeed(s)}
+                      >{s}x</button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="video-ctrl-group">
+                  <div className="video-ctrl-label">
+                    Live Sync &nbsp;
+                    <span className={`sync-value ${liveOffset > 0 ? 'delay' : liveOffset < 0 ? 'advance' : ''}`}>
+                      {liveOffset === 0 ? 'No offset' : liveOffset > 0 ? `+${(liveOffset/1000).toFixed(1)}s` : `${(liveOffset/1000).toFixed(1)}s`}
+                    </span>
+                  </div>
+                  <div className="video-sync-row">
+                    <input
+                      type="range"
+                      min="-10000"
+                      max="10000"
+                      step="100"
+                      value={liveOffset}
+                      onChange={e => setLiveOffset(Number(e.target.value))}
+                      className="sync-slider"
+                    />
+                    <button className="sync-reset" onClick={() => setLiveOffset(0)} title="Reset">↺</button>
+                  </div>
+                </div>
+
+                <button
+                  className="video-change-btn"
+                  onClick={() => { setVideoFile(null); setVideoUrl(null); setCurrentSubText('') }}
+                >
+                  ✕ Remove Video
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
     </div>
   )
 }
@@ -98,6 +188,15 @@ export default function Home() {
   const [translatingL2, setTranslatingL2] = useState(false)
 
   const [offsetMs, setOffsetMs] = useState(0)
+
+  const [videoFile, setVideoFile] = useState(null)
+  const [videoUrl, setVideoUrl] = useState(null)
+  const [videoDragging, setVideoDragging] = useState(false)
+  const [videoSpeed, setVideoSpeed] = useState(1)
+  const [liveOffset, setLiveOffset] = useState(0)
+  const [currentSubText, setCurrentSubText] = useState('')
+  const videoRef = useRef(null)
+  const animFrameRef = useRef(null)
 
   const [previewStyle] = useState('transparent')
   const previewLine = PREVIEW_LINES[1]
@@ -241,6 +340,51 @@ export default function Home() {
     updated[idx] = { ...updated[idx], text: newText }
     setBlocksL2(updated)
   }
+
+
+  const handleVideoFile = (file) => {
+    if (!file || !file.type.startsWith('video/')) return
+    if (videoUrl) URL.revokeObjectURL(videoUrl)
+    setVideoFile(file)
+    setVideoUrl(URL.createObjectURL(file))
+    setCurrentSubText('')
+  }
+
+  const handleVideoDrop = (e) => {
+    e.preventDefault()
+    setVideoDragging(false)
+    const file = e.dataTransfer.files[0]
+    handleVideoFile(file)
+  }
+
+  const handleVideoSpeed = (speed) => {
+    setVideoSpeed(speed)
+    if (videoRef.current) videoRef.current.playbackRate = speed
+  }
+
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video) return
+    const tick = () => {
+      const t = video.currentTime * 1000
+      const offset = offsetMs + liveOffset
+      const adjustedT = t - offset
+      const allBlocks = [...blocksL1]
+      const match = allBlocks.find(b => {
+        const toMs = (ts) => {
+          if (!ts) return 0
+          const m = ts.match(/(\d{2}):(\d{2}):(\d{2})[,.]?(\d{3})?/)
+          if (!m) return 0
+          return parseInt(m[1])*3600000 + parseInt(m[2])*60000 + parseInt(m[3])*1000 + parseInt(m[4]||0)
+        }
+        return adjustedT >= toMs(b.start) && adjustedT <= toMs(b.end)
+      })
+      setCurrentSubText(match ? match.text : '')
+      animFrameRef.current = requestAnimationFrame(tick)
+    }
+    animFrameRef.current = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(animFrameRef.current)
+  }, [videoUrl, blocksL1, offsetMs, liveOffset])
 
   const handleDownloadSingle = () => {
     if (!blocksL1.length) return
@@ -510,6 +654,96 @@ export default function Home() {
           />
         </div>
       )}
+
+      {/* VIDEO PLAYER */}
+      {selectedTitle && blocksL1.length > 0 && (
+        <div className="video-section">
+          <div className="video-section-title">🎬 Watch with Subtitles</div>
+
+          {!videoFile ? (
+            <div
+              className={`video-dropzone ${videoDragging ? 'dragging' : ''}`}
+              onDragOver={e => { e.preventDefault(); setVideoDragging(true) }}
+              onDragLeave={() => setVideoDragging(false)}
+              onDrop={handleVideoDrop}
+              onClick={() => document.getElementById('video-file-input').click()}
+            >
+              <div className="video-drop-icon">▶</div>
+              <div className="video-drop-text">Drop your video file here</div>
+              <div className="video-drop-sub">or click to browse · MP4, MKV, WebM</div>
+              <input
+                id="video-file-input"
+                type="file"
+                accept="video/*"
+                style={{ display: 'none' }}
+                onChange={e => handleVideoFile(e.target.files[0])}
+              />
+            </div>
+          ) : (
+            <div className="video-player-wrap">
+              <div className="video-container">
+                <video
+                  ref={videoRef}
+                  src={videoUrl}
+                  controls
+                  className="video-el"
+                />
+                {currentSubText && (
+                  <div className="video-sub-overlay">
+                    {currentSubText.split('\n').map((line, i) => (
+                      <div key={i} className="video-sub-line">{line}</div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="video-controls-bar">
+                <div className="video-ctrl-group">
+                  <div className="video-ctrl-label">Speed</div>
+                  <div className="video-speed-btns">
+                    {[0.5, 0.75, 1, 1.25, 1.5, 2].map(s => (
+                      <button
+                        key={s}
+                        className={`video-speed-btn ${videoSpeed === s ? 'active' : ''}`}
+                        onClick={() => handleVideoSpeed(s)}
+                      >{s}x</button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="video-ctrl-group">
+                  <div className="video-ctrl-label">
+                    Live Sync &nbsp;
+                    <span className={`sync-value ${liveOffset > 0 ? 'delay' : liveOffset < 0 ? 'advance' : ''}`}>
+                      {liveOffset === 0 ? 'No offset' : liveOffset > 0 ? `+${(liveOffset/1000).toFixed(1)}s` : `${(liveOffset/1000).toFixed(1)}s`}
+                    </span>
+                  </div>
+                  <div className="video-sync-row">
+                    <input
+                      type="range"
+                      min="-10000"
+                      max="10000"
+                      step="100"
+                      value={liveOffset}
+                      onChange={e => setLiveOffset(Number(e.target.value))}
+                      className="sync-slider"
+                    />
+                    <button className="sync-reset" onClick={() => setLiveOffset(0)} title="Reset">↺</button>
+                  </div>
+                </div>
+
+                <button
+                  className="video-change-btn"
+                  onClick={() => { setVideoFile(null); setVideoUrl(null); setCurrentSubText('') }}
+                >
+                  ✕ Remove Video
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
     </div>
   )
 }
