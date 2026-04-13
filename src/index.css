@@ -605,13 +605,13 @@ h1, h2, h3, h4 {
 
 .vpn-card {
   flex: 0 0 auto;
-  width: 86px;
-  height: 80px;
+  width: 84px;
+  height: 56px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: 3px;
   padding: 0;
   background: var(--bg2);
   border: 1px solid var(--border);
@@ -635,6 +635,7 @@ h1, h2, h3, h4 {
   color: var(--text);
   letter-spacing: -0.01em;
   text-align: center;
+  white-space: nowrap;
 }
 
 .vpn-name span { color: var(--accent); }
@@ -643,17 +644,19 @@ h1, h2, h3, h4 {
 .vpn-name.surf span { color: #1fd5b5; }
 
 .vpn-pitch {
-  font-size: 10px;
+  font-size: 9px;
   color: var(--muted);
   text-align: center;
+  white-space: nowrap;
 }
 
 .vpn-cta {
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 700;
   color: var(--accent);
   font-family: 'Syne', sans-serif;
   letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 
 @media (max-width: 480px) {
