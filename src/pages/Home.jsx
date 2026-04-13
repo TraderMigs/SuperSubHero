@@ -363,6 +363,7 @@ export default function Home() {
   }
 
   useEffect(() => {
+    if (!videoUrl) return
     const video = videoRef.current
     if (!video) return
     const tick = () => {
