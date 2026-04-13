@@ -5,6 +5,8 @@ export default async function handler(req, res) {
   if (!srtContent || !targetLanguage) return res.status(400).json({ error: 'srtContent and targetLanguage required' })
 
   const OPENAI_API_KEY = process.env.OPENAI_API_KEY
+  const CHUNK_SIZE = 150
+  const DELIMITER = '|||'
 
   try {
     const lines = srtContent.split('\n')
@@ -22,66 +24,77 @@ export default async function handler(req, res) {
 
     if (!textLines.length) throw new Error('No text found to translate')
 
-    const DELIMITER = '|||'
-    const batch = textLines.map(l => l.text).join(`\n${DELIMITER}\n`)
-
     const systemPrompt = `You are an expert professional subtitle translator specializing in ${targetLanguage}.
 
-STRICT RULES — follow every one without exception:
-1. Translate EVERY single line into ${targetLanguage}. No exceptions.
+STRICT RULES — no exceptions:
+1. Translate EVERY single line into ${targetLanguage}. Every line. No exceptions.
 2. Lines are separated by the delimiter: ${DELIMITER}
-3. Return ONLY the translated lines separated by ${DELIMITER}. Nothing else. No explanations, no commentary, no preamble.
+3. Return ONLY the translated lines separated by ${DELIMITER}. No explanations, no commentary, no preamble, no markdown.
 4. Keep the EXACT same number of lines as the input. Never merge, split, add, or remove lines.
-5. Translate ALL content including: dialogue, stage directions like [Door slams], sound cues like [Indistinct conversation], music notes like ♪, speaker labels, everything.
-6. Never leave any line in English or any other language. Every line must be in ${targetLanguage}.
-7. If a line contains only symbols (♪, ♩, ♫) keep those symbols as-is.
+5. Translate ALL content — dialogue, stage directions [like this], sound cues, speaker labels, everything.
+6. NEVER leave any line in English or any source language. Every single line must be in ${targetLanguage}.
+7. Lines containing only symbols (♪ ♩ ♫ ♬) — keep those symbols exactly as-is.
+8. If a line is a name or untranslatable proper noun, transliterate it into ${targetLanguage} script if applicable, otherwise keep it.
 
-SELF-CHECK PROCESS — before returning your answer:
-- Step 1: Translate all lines to ${targetLanguage}
-- Step 2: Review every translated line — flag any line still in English or another language
-- Step 3: Fix every flagged line
-- Step 4: Confirm all lines are in ${targetLanguage}
-- Step 5: Return ONLY the final corrected translations separated by ${DELIMITER}`
+SELF-CHECK before returning:
+- Scan every line — if ANY line is still in English or the source language, translate it now.
+- Only return the final fully-translated result.`
 
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${OPENAI_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: batch }
-        ],
-        temperature: 0.1,
-        max_tokens: 16000,
-      }),
-    })
-
-    if (!response.ok) {
-      const err = await response.text()
-      throw new Error(`OpenAI error: ${err}`)
+    // Split textLines into chunks of CHUNK_SIZE
+    const chunks = []
+    for (let i = 0; i < textLines.length; i += CHUNK_SIZE) {
+      chunks.push(textLines.slice(i, i + CHUNK_SIZE))
     }
 
-    const data = await response.json()
-    const translated = data.choices[0].message.content
-      .split(DELIMITER)
-      .map(t => t.trim())
-      .filter(t => t.length > 0)
+    // Translate each chunk sequentially
+    const allTranslated = []
 
-    while (translated.length < textLines.length) translated.push('')
-    const trimmedTranslated = translated.slice(0, textLines.length)
+    for (const chunk of chunks) {
+      const batch = chunk.map(l => l.text).join(`\n${DELIMITER}\n`)
 
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${OPENAI_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: batch }
+          ],
+          temperature: 0.1,
+          max_tokens: 8000,
+        }),
+      })
+
+      if (!response.ok) {
+        const err = await response.text()
+        throw new Error(`OpenAI error: ${err}`)
+      }
+
+      const data = await response.json()
+      const chunkTranslated = data.choices[0].message.content
+        .split(DELIMITER)
+        .map(t => t.trim())
+        .filter(t => t.length > 0)
+
+      // Pad if GPT returned fewer lines than sent
+      while (chunkTranslated.length < chunk.length) chunkTranslated.push('')
+      allTranslated.push(...chunkTranslated.slice(0, chunk.length))
+    }
+
+    // Rebuild SRT with translations
     const result = [...lines]
     textLines.forEach((item, i) => {
-      result[item.idx] = trimmedTranslated[i] || ''
+      result[item.idx] = allTranslated[i] || ''
     })
 
     return res.status(200).json({
       content: result.join('\n'),
       linesTranslated: textLines.length,
+      chunksProcessed: chunks.length,
     })
 
   } catch (err) {
