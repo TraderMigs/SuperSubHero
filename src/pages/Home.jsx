@@ -184,6 +184,21 @@ export default function Home() {
     setBlocks([])
 
     const tryDownload = async (subItem) => {
+      // OpenSubtitles: needs server-side API call to get temp download URL
+      if (subItem.source === 'opensubtitles' && subItem.file_id) {
+        const resp = await fetch('/api/fetch-sub', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ file_id: subItem.file_id }),
+        })
+        const data = await resp.json()
+        if (data.error) throw new Error(data.error)
+        const parsed = parseSrt(data.content)
+        if (!parsed.length) throw new Error('Could not parse subtitle file')
+        return parsed
+      }
+
+      // SubDL: browser fetches directly from CDN
       const downloadUrl = subItem.url.startsWith('http')
         ? subItem.url
         : `https://dl.subdl.com${subItem.url}`
@@ -216,7 +231,7 @@ export default function Home() {
     } catch (err) {
       if (fallbackList && fallbackList.length > 0) {
         for (const next of fallbackList) {
-          if (next.url === sub.url) continue
+          if (next.id === sub.id) continue
           try {
             const parsed = await tryDownload(next)
             setBlocks(parsed)
