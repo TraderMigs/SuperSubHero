@@ -62,6 +62,7 @@ async function fetchFromSubDL(params, SUBDL_KEY) {
     languages: language,
     type,
     releases: '1',
+    subs_per_page: '30',
   })
 
   if (sd_id) query.append('sd_id', sd_id)
