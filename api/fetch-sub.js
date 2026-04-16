@@ -44,9 +44,7 @@ async function fetchSubDL(url) {
     },
   })
 
-  if (!resp.ok) {
-    throw new Error(`SubDL CDN returned ${resp.status}`)
-  }
+  if (!resp.ok) throw new Error(`SubDL CDN returned ${resp.status}`)
 
   const buffer = await resp.arrayBuffer()
   const bytes = new Uint8Array(buffer)
@@ -76,35 +74,57 @@ async function fetchOpenSubtitles(file_id, OS_KEY) {
     body: JSON.stringify({ file_id }),
   })
 
-  if (!dlResp.ok) {
-    throw new Error(`OpenSubtitles download link failed: ${dlResp.status}`)
-  }
+  if (!dlResp.ok) throw new Error(`OpenSubtitles download link failed: ${dlResp.status}`)
 
   const dlData = await dlResp.json()
-  if (!dlData.link) {
-    throw new Error('OpenSubtitles did not return a download link')
-  }
+  if (!dlData.link) throw new Error('OpenSubtitles did not return a download link')
 
   const srtResp = await fetch(dlData.link, {
-    headers: {
-      'User-Agent': 'SuperSubHero v2.0',
-      'Accept': '*/*',
-    },
+    headers: { 'User-Agent': 'SuperSubHero v2.0', Accept: '*/*' },
   })
 
-  if (!srtResp.ok) {
-    throw new Error(`OpenSubtitles CDN returned ${srtResp.status}`)
-  }
+  if (!srtResp.ok) throw new Error(`OpenSubtitles CDN returned ${srtResp.status}`)
 
   const content = await srtResp.text()
-  if (!content || !content.trim()) {
-    throw new Error('OpenSubtitles returned empty subtitle content')
+  if (!content || !content.trim()) throw new Error('OpenSubtitles returned empty subtitle content')
+
+  return { content, source: 'opensubtitles', format: 'srt' }
+}
+
+async function fetchSubSource(ss_id, SS_KEY) {
+  // Step 1: Get subtitle detail to find the download file ID
+  const detailResp = await fetch(
+    `https://api.subsource.net/api/v1/subtitles/${ss_id}`,
+    { headers: { 'X-API-Key': SS_KEY, Accept: 'application/json' } }
+  )
+
+  if (!detailResp.ok) throw new Error(`SubSource detail failed: ${detailResp.status}`)
+
+  const detail = await detailResp.json()
+  const downloadId = detail?.data?.id || ss_id
+
+  // Step 2: Get download link
+  const dlResp = await fetch(
+    `https://api.subsource.net/api/v1/subtitles/${downloadId}/download`,
+    { headers: { 'X-API-Key': SS_KEY, Accept: '*/*' } }
+  )
+
+  if (!dlResp.ok) throw new Error(`SubSource download failed: ${dlResp.status}`)
+
+  const buffer = await dlResp.arrayBuffer()
+  const bytes = new Uint8Array(buffer)
+  const contentType = (dlResp.headers.get('content-type') || '').toLowerCase()
+  const isZip = contentType.includes('zip') || (bytes.length >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4B)
+
+  if (isZip) {
+    const extracted = await extractSrtFromZip(buffer)
+    return { ...extracted, source: 'subsource' }
   }
 
   return {
-    content,
-    source: 'opensubtitles',
-    format: 'srt',
+    content: decodeText(bytes),
+    format: contentType.includes('vtt') ? 'vtt' : contentType.includes('ass') ? 'ass' : 'srt',
+    source: 'subsource',
   }
 }
 
@@ -113,14 +133,16 @@ export default async function handler(req, res) {
     return res.status(405).json({ success: false, error: 'Method not allowed' })
   }
 
-  const { url, file_id } = req.body || {}
-  if (!url && !file_id) {
-    return res.status(400).json({ success: false, error: 'url or file_id required' })
+  const { url, file_id, ss_id } = req.body || {}
+  if (!url && !file_id && !ss_id) {
+    return res.status(400).json({ success: false, error: 'url, file_id, or ss_id required' })
   }
 
   const OS_KEY = process.env.OPENSUBTITLES_API_KEY
+  const SS_KEY = process.env.SUBSOURCE_API_KEY
   const errors = []
 
+  // OpenSubtitles via file_id
   if (file_id && OS_KEY) {
     try {
       const data = await fetchOpenSubtitles(file_id, OS_KEY)
@@ -131,6 +153,18 @@ export default async function handler(req, res) {
     }
   }
 
+  // SubSource via ss_id
+  if (ss_id && SS_KEY) {
+    try {
+      const data = await fetchSubSource(ss_id, SS_KEY)
+      return res.status(200).json({ success: true, ...data })
+    } catch (err) {
+      errors.push(`SubSource: ${err.message}`)
+      console.error('SubSource fetch error:', err.message)
+    }
+  }
+
+  // SubDL via url
   if (url) {
     try {
       const data = await fetchSubDL(url)
@@ -143,6 +177,8 @@ export default async function handler(req, res) {
 
   return res.status(500).json({
     success: false,
-    error: errors.length ? `All subtitle download methods failed. ${errors.join(' | ')}` : 'All subtitle download methods failed.',
+    error: errors.length
+      ? `All subtitle download methods failed. ${errors.join(' | ')}`
+      : 'All subtitle download methods failed.',
   })
 }
