@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react'
+import JSZip from 'jszip'
 import { LANGUAGES } from '../lib/languages.js'
 import { parseSrt, buildSrt, mergeSrts, downloadFile, applyOffset } from '../lib/srt.js'
 
@@ -181,28 +182,43 @@ export default function Home() {
     setLoading(true)
     setError('')
     setBlocks([])
-    const tryFetch = async (url) => {
-      const resp = await fetch('/api/fetch-sub', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url }),
-      })
-      const data = await resp.json()
-      if (data.error) throw new Error(data.error)
-      const parsed = parseSrt(data.content)
+
+    const tryDownload = async (subItem) => {
+      const downloadUrl = subItem.url.startsWith('http')
+        ? subItem.url
+        : `https://dl.subdl.com${subItem.url}`
+
+      const resp = await fetch(downloadUrl)
+      if (!resp.ok) throw new Error(`Download failed: ${resp.status}`)
+
+      const buffer = await resp.arrayBuffer()
+      const bytes = new Uint8Array(buffer)
+      const isZip = bytes[0] === 0x50 && bytes[1] === 0x4B
+
+      let srtContent = ''
+      if (isZip) {
+        const zip = await JSZip.loadAsync(buffer)
+        const srtFile = Object.values(zip.files).find(f => f.name.toLowerCase().endsWith('.srt'))
+        if (!srtFile) throw new Error('No SRT file found in ZIP')
+        srtContent = await srtFile.async('string')
+      } else {
+        srtContent = new TextDecoder('utf-8').decode(bytes)
+      }
+
+      const parsed = parseSrt(srtContent)
       if (!parsed.length) throw new Error('Could not parse subtitle file')
       return parsed
     }
+
     try {
-      const parsed = await tryFetch(sub.url)
+      const parsed = await tryDownload(sub)
       setBlocks(parsed)
     } catch (err) {
-      // Auto-retry with next available release
       if (fallbackList && fallbackList.length > 0) {
         for (const next of fallbackList) {
           if (next.url === sub.url) continue
           try {
-            const parsed = await tryFetch(next.url)
+            const parsed = await tryDownload(next)
             setBlocks(parsed)
             setError('')
             setLoading(false)
@@ -215,7 +231,6 @@ export default function Home() {
       setLoading(false)
     }
   }
-
   const translateFallback = async (targetLangCode, setBlocks, setError, setTranslating) => {
     setTranslating(true)
     setError('')
