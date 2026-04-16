@@ -189,6 +189,7 @@ export default function Home() {
         body: JSON.stringify({
           url: subItem.url || null,
           file_id: subItem.file_id || null,
+          ss_id: subItem.ss_id || null,
         }),
       })
       const data = await resp.json()
@@ -245,6 +246,7 @@ export default function Home() {
           body: JSON.stringify({
             url: candidate.url || null,
             file_id: candidate.file_id || null,
+            ss_id: candidate.ss_id || null,
           }),
         })
         const fetchData = await fetchResp.json()
