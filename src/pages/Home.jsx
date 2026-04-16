@@ -1,5 +1,4 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react'
-import JSZip from 'jszip'
 import { LANGUAGES } from '../lib/languages.js'
 import { parseSrt, buildSrt, mergeSrts, downloadFile, applyOffset } from '../lib/srt.js'
 
@@ -183,57 +182,31 @@ export default function Home() {
     setError('')
     setBlocks([])
 
-    const tryDownload = async (subItem) => {
-      // OpenSubtitles: needs server-side API call to get temp download URL
-      if (subItem.source === 'opensubtitles' && subItem.file_id) {
-        const resp = await fetch('/api/fetch-sub', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ file_id: subItem.file_id }),
-        })
-        const data = await resp.json()
-        if (data.error) throw new Error(data.error)
-        const parsed = parseSrt(data.content)
-        if (!parsed.length) throw new Error('Could not parse subtitle file')
-        return parsed
-      }
-
-      // SubDL: browser fetches directly from CDN
-      const downloadUrl = subItem.url.startsWith('http')
-        ? subItem.url
-        : `https://dl.subdl.com${subItem.url}`
-
-      const resp = await fetch(downloadUrl)
-      if (!resp.ok) throw new Error(`Download failed: ${resp.status}`)
-
-      const buffer = await resp.arrayBuffer()
-      const bytes = new Uint8Array(buffer)
-      const isZip = bytes[0] === 0x50 && bytes[1] === 0x4B
-
-      let srtContent = ''
-      if (isZip) {
-        const zip = await JSZip.loadAsync(buffer)
-        const srtFile = Object.values(zip.files).find(f => f.name.toLowerCase().endsWith('.srt'))
-        if (!srtFile) throw new Error('No SRT file found in ZIP')
-        srtContent = await srtFile.async('string')
-      } else {
-        srtContent = new TextDecoder('utf-8').decode(bytes)
-      }
-
-      const parsed = parseSrt(srtContent)
+    const tryFetch = async (subItem) => {
+      const resp = await fetch('/api/fetch-sub', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url: subItem.url || null,
+          file_id: subItem.file_id || null,
+        }),
+      })
+      const data = await resp.json()
+      if (!data.success || data.error) throw new Error(data.error || 'Subtitle download failed')
+      const parsed = parseSrt(data.content)
       if (!parsed.length) throw new Error('Could not parse subtitle file')
       return parsed
     }
 
     try {
-      const parsed = await tryDownload(sub)
+      const parsed = await tryFetch(sub)
       setBlocks(parsed)
     } catch (err) {
       if (fallbackList && fallbackList.length > 0) {
         for (const next of fallbackList) {
           if (next.id === sub.id) continue
           try {
-            const parsed = await tryDownload(next)
+            const parsed = await tryFetch(next)
             setBlocks(parsed)
             setError('')
             setLoading(false)
@@ -262,13 +235,17 @@ export default function Home() {
       const listData = await listResp.json()
       if (!listData.subtitles?.length) throw new Error('No English subtitles found to translate from')
 
+      const firstSub = listData.subtitles[0]
       const fetchResp = await fetch('/api/fetch-sub', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: listData.subtitles[0].url }),
+        body: JSON.stringify({
+          url: firstSub.url || null,
+          file_id: firstSub.file_id || null,
+        }),
       })
       const fetchData = await fetchResp.json()
-      if (fetchData.error) throw new Error(fetchData.error)
+      if (!fetchData.success || fetchData.error) throw new Error(fetchData.error || 'Could not download English subtitles')
 
       const targetLang = LANGUAGES.find(l => l.code === targetLangCode)?.label || targetLangCode
       const translateResp = await fetch('/api/translate-srt', {
