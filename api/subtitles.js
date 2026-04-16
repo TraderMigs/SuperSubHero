@@ -9,6 +9,20 @@ const OS_LANG_MAP = {
   'BG': 'bg', 'SR': 'sr',
 }
 
+// SubSource uses full language names
+const SS_LANG_MAP = {
+  'EN': 'english', 'FR': 'french', 'ES': 'spanish', 'DE': 'german',
+  'IT': 'italian', 'PT': 'portuguese', 'ZH': 'chinese', 'ZT': 'chinese',
+  'JA': 'japanese', 'KO': 'korean', 'AR': 'arabic', 'HI': 'hindi',
+  'RU': 'russian', 'TH': 'thai', 'VI': 'vietnamese', 'ID': 'indonesian',
+  'MS': 'malay', 'NL': 'dutch', 'PL': 'polish', 'SV': 'swedish',
+  'TR': 'turkish', 'UK': 'ukrainian', 'CS': 'czech', 'RO': 'romanian',
+  'HU': 'hungarian', 'EL': 'greek', 'HE': 'hebrew', 'DA': 'danish',
+  'FI': 'finnish', 'NO': 'norwegian', 'TL': 'tagalog', 'FA': 'farsi_persian',
+  'BN': 'bengali', 'HR': 'croatian', 'SK': 'slovak', 'BG': 'bulgarian',
+  'SR': 'serbian',
+}
+
 function normalizeName(name = '') {
   return name
     .toLowerCase()
@@ -25,8 +39,10 @@ function sortCandidates(subtitles, episode) {
     const bExact = episodeNum ? b.episode === episodeNum : false
     const aFull = !!(a.full_season || a.episode === 0)
     const bFull = !!(b.full_season || b.episode === 0)
-    const aProvider = a.source === 'opensubtitles' ? 1 : 0
-    const bProvider = b.source === 'opensubtitles' ? 1 : 0
+    // Priority: subdl=0, subsource=1, opensubtitles=2
+    const providerRank = { subdl: 0, subsource: 1, opensubtitles: 2 }
+    const aProvider = providerRank[a.source] ?? 1
+    const bProvider = providerRank[b.source] ?? 1
 
     if (aExact && !bExact) return -1
     if (!aExact && bExact) return 1
@@ -58,9 +74,7 @@ async function fetchFromSubDL(params, SUBDL_KEY) {
   const url = `https://api.subdl.com/api/v1/subtitles?${query}`
   const resp = await fetch(url, { headers: { Accept: 'application/json' } })
 
-  if (!resp.ok) {
-    throw new Error(`SubDL error: ${resp.status}`)
-  }
+  if (!resp.ok) throw new Error(`SubDL error: ${resp.status}`)
 
   const data = await resp.json()
   if (!data.status || !data.subtitles?.length) return []
@@ -72,6 +86,7 @@ async function fetchFromSubDL(params, SUBDL_KEY) {
     normalized_name: normalizeName(s.release_name || s.name || ''),
     url: s.url,
     file_id: null,
+    ss_id: null,
     source: 'subdl',
     language: s.lang || language,
     author: s.author || null,
@@ -106,9 +121,7 @@ async function fetchFromOpenSubtitles(params, OS_KEY) {
     },
   })
 
-  if (!resp.ok) {
-    throw new Error(`OpenSubtitles error: ${resp.status}`)
-  }
+  if (!resp.ok) throw new Error(`OpenSubtitles error: ${resp.status}`)
 
   const data = await resp.json()
   if (!data.data?.length) return []
@@ -123,6 +136,7 @@ async function fetchFromOpenSubtitles(params, OS_KEY) {
         normalized_name: normalizeName(s.attributes?.release || s.attributes?.filename || ''),
         url: null,
         file_id: file?.file_id || null,
+        ss_id: null,
         source: 'opensubtitles',
         language,
         author: null,
@@ -134,21 +148,87 @@ async function fetchFromOpenSubtitles(params, OS_KEY) {
     .filter(s => s.file_id)
 }
 
-function mergeResults(subdlSubs, openSubs, episode) {
+async function fetchFromSubSource(params, SS_KEY) {
+  if (!SS_KEY) return []
+
+  const { imdb_id, tmdb_id, type, language, season, episode } = params
+  const ssLang = SS_LANG_MAP[language] || language.toLowerCase()
+
+  // Step 1: Find the movie/show ID on SubSource using imdb_id or tmdb_id
+  let movieId = null
+
+  if (imdb_id) {
+    const searchResp = await fetch(
+      `https://api.subsource.net/api/v1/movies/search?query=${encodeURIComponent(imdb_id)}&searchType=imdb`,
+      { headers: { 'X-API-Key': SS_KEY, Accept: 'application/json' } }
+    )
+    if (searchResp.ok) {
+      const searchData = await searchResp.json()
+      movieId = searchData?.data?.[0]?.id || null
+    }
+  }
+
+  if (!movieId && tmdb_id) {
+    const searchResp = await fetch(
+      `https://api.subsource.net/api/v1/movies/search?query=${encodeURIComponent(tmdb_id)}&searchType=tmdb`,
+      { headers: { 'X-API-Key': SS_KEY, Accept: 'application/json' } }
+    )
+    if (searchResp.ok) {
+      const searchData = await searchResp.json()
+      movieId = searchData?.data?.[0]?.id || null
+    }
+  }
+
+  if (!movieId) return []
+
+  // Step 2: Get subtitles for this movie/show
+  const subQuery = new URLSearchParams({ language: ssLang })
+  if (type === 'tv' && season) subQuery.append('season', season)
+  if (type === 'tv' && episode) subQuery.append('episode', episode)
+
+  const subResp = await fetch(
+    `https://api.subsource.net/api/v1/subtitles?movieId=${movieId}&${subQuery}`,
+    { headers: { 'X-API-Key': SS_KEY, Accept: 'application/json' } }
+  )
+
+  if (!subResp.ok) throw new Error(`SubSource subtitles error: ${subResp.status}`)
+
+  const subData = await subResp.json()
+  if (!subData?.data?.length) return []
+
+  return subData.data.map(s => ({
+    id: `ss_${s.id}`,
+    sd_id: null,
+    name: s.releaseName || s.name || 'Unknown release',
+    normalized_name: normalizeName(s.releaseName || s.name || ''),
+    url: null,
+    file_id: null,
+    ss_id: s.id,
+    source: 'subsource',
+    language,
+    author: s.uploadedBy || null,
+    season: s.season || null,
+    episode: s.episode || null,
+    full_season: s.fullSeason || false,
+  }))
+}
+
+function mergeResults(subdlSubs, openSubs, ssSubs, episode) {
   const combined = [...subdlSubs]
   const seen = new Set(subdlSubs.map(s => `${s.source}:${s.normalized_name}`))
 
-  for (const sub of openSubs) {
+  for (const sub of [...openSubs, ...ssSubs]) {
     const exactKey = `${sub.source}:${sub.normalized_name}`
-    const crossKey = `subdl:${sub.normalized_name}`
-    if (seen.has(exactKey) || seen.has(crossKey)) continue
+    const crossKeySubdl = `subdl:${sub.normalized_name}`
+    const crossKeySS = `subsource:${sub.normalized_name}`
+    if (seen.has(exactKey) || seen.has(crossKeySubdl) || seen.has(crossKeySS)) continue
     seen.add(exactKey)
     combined.push(sub)
   }
 
   return sortCandidates(combined, episode)
     .map(({ normalized_name, ...rest }) => rest)
-    .slice(0, 30)
+    .slice(0, 40)
 }
 
 export default async function handler(req, res) {
@@ -163,11 +243,13 @@ export default async function handler(req, res) {
 
   const SUBDL_KEY = process.env.SUBDL_API_KEY
   const OS_KEY = process.env.OPENSUBTITLES_API_KEY
+  const SS_KEY = process.env.SUBSOURCE_API_KEY
   const params = { sd_id, imdb_id, tmdb_id, type, language, season, episode }
 
-  const [subdlResult, openResult] = await Promise.allSettled([
+  const [subdlResult, openResult, ssResult] = await Promise.allSettled([
     fetchFromSubDL(params, SUBDL_KEY),
     fetchFromOpenSubtitles(params, OS_KEY),
+    fetchFromSubSource(params, SS_KEY),
   ])
 
   if (subdlResult.status === 'rejected') {
@@ -176,10 +258,14 @@ export default async function handler(req, res) {
   if (openResult.status === 'rejected') {
     console.error('OpenSubtitles list error:', openResult.reason?.message || openResult.reason)
   }
+  if (ssResult.status === 'rejected') {
+    console.error('SubSource list error:', ssResult.reason?.message || ssResult.reason)
+  }
 
   const subdlSubs = subdlResult.status === 'fulfilled' ? subdlResult.value : []
   const openSubs = openResult.status === 'fulfilled' ? openResult.value : []
-  const subtitles = mergeResults(subdlSubs, openSubs, episode)
+  const ssSubs = ssResult.status === 'fulfilled' ? ssResult.value : []
+  const subtitles = mergeResults(subdlSubs, openSubs, ssSubs, episode)
 
   return res.status(200).json({
     subtitles,
@@ -187,6 +273,7 @@ export default async function handler(req, res) {
     providers: {
       subdl: subdlSubs.length,
       opensubtitles: openSubs.length,
+      subsource: ssSubs.length,
     },
   })
 }
