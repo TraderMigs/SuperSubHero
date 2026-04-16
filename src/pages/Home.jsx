@@ -8,7 +8,7 @@ const PREVIEW_LINES = [
   { en: "Why so serious?", th: 'ทำไมต้องจริงจังนัก?' },
 ]
 
-function CollapsiblePanel({ title, langLabel, blocks, loading, translating, error, onBlockChange, emptyIcon, emptyText, emptySubText }) {
+function CollapsiblePanel({ title, langLabel, blocks, loading, translating, error, onBlockChange, emptyIcon, emptyText, emptySubText, translateSource }) {
   const [open, setOpen] = useState(false)
   const hasContent = blocks.length > 0
   const isActive = loading || translating
@@ -23,6 +23,7 @@ function CollapsiblePanel({ title, langLabel, blocks, loading, translating, erro
         <div className="panel-header-left">
           <div className="panel-title">{title}</div>
           {hasContent && <div className="panel-lang">{langLabel} · {blocks.length} lines</div>}
+          {hasContent && translateSource && <div className="panel-lang" style={{ fontSize: 11, opacity: 0.65, marginTop: 2 }}>{translateSource}</div>}
           {isActive && <div className="panel-lang" style={{ color: 'var(--accent2)' }}>{translating ? 'Translating...' : 'Loading...'}</div>}
         </div>
         {hasContent && (
@@ -97,6 +98,8 @@ export default function Home() {
 
   const [translatingL1, setTranslatingL1] = useState(false)
   const [translatingL2, setTranslatingL2] = useState(false)
+  const [translateSourceL1, setTranslateSourceL1] = useState('')
+  const [translateSourceL2, setTranslateSourceL2] = useState('')
 
   const [offsetMs, setOffsetMs] = useState(0)
 
@@ -221,7 +224,7 @@ export default function Home() {
       setLoading(false)
     }
   }
-  const translateFallback = async (targetLangCode, setBlocks, setError, setTranslating) => {
+  const translateFallback = async (targetLangCode, setBlocks, setError, setTranslating, setTranslateSource) => {
     setTranslating(true)
     setError('')
     setBlocks([])
@@ -247,6 +250,7 @@ export default function Home() {
         ...listData.subtitles.filter(c => c.source === 'subdl'),
       ]
 
+      let usedCandidate = null
       for (const candidate of sortedCandidates) {
         const fetchResp = await fetch('/api/fetch-sub', {
           method: 'POST',
@@ -260,12 +264,17 @@ export default function Home() {
         const fetchData = await fetchResp.json()
         if (fetchData.success && fetchData.content) {
           englishContent = fetchData.content
+          usedCandidate = candidate
           break
         }
         lastDownloadError = fetchData.error || lastDownloadError
       }
 
       if (!englishContent) throw new Error(lastDownloadError)
+      if (setTranslateSource && usedCandidate) {
+        const epLabel = usedCandidate.episode > 0 ? ` · E${usedCandidate.episode}` : ''
+        setTranslateSource(`Translated from: English${epLabel} (${usedCandidate.source})`)
+      }
 
       const targetLang = LANGUAGES.find(l => l.code === targetLangCode)?.label || targetLangCode
       const translateResp = await fetch('/api/translate-srt', {
@@ -451,6 +460,7 @@ export default function Home() {
             translating={translatingL1}
             error={errorL1}
             onBlockChange={updateBlockL1}
+            translateSource={translateSourceL1}
             emptyIcon="📄"
             emptyText="Subtitle text will appear here"
             emptySubText="Select a subtitle from Controls"
@@ -471,7 +481,7 @@ export default function Home() {
             {errorL1 === 'not_found' && !blocksL1.length && !translatingL1 && (
               <div className="ai-fallback-box">
                 <div className="ai-fallback-text">No {lang1Label} subtitles found.</div>
-                <button className="fetch-btn ai-btn" onClick={() => translateFallback(lang1, setBlocksL1, setErrorL1, setTranslatingL1)}>
+                <button className="fetch-btn ai-btn" onClick={() => translateFallback(lang1, setBlocksL1, setErrorL1, setTranslatingL1, setTranslateSourceL1)}>
                   ✨ AI Translate from English
                 </button>
               </div>
@@ -482,11 +492,17 @@ export default function Home() {
             {subResultsL1.length > 0 && (
               <div>
                 <div className="ctrl-label">Pick a release</div>
-                {subResultsL1.slice(0, 8).map((s, i) => (
+                {subResultsL1
+                  .filter(s => !episode || !s.episode || s.episode === parseInt(episode) || s.full_season)
+                  .slice(0, 8)
+                  .map((s, i) => (
                   <div key={i} className={`sub-result-item ${selectedSubL1?.id === s.id ? 'selected' : ''}`} onClick={() => { setSelectedSubL1(s); loadSubContent(s, setLoadingL1, setBlocksL1, setErrorL1, subResultsL1) }}>
                     <div className="sub-result-name">{s.name}</div>
-                    {s.episode > 0 && <div className="sub-result-meta">E{s.episode}</div>}
-                    {(s.full_season || s.episode === 0) && <div className="sub-result-meta" style={{ color: 'var(--muted)' }}>Full</div>}
+                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 2 }}>
+                      {s.episode > 0 && <div className="sub-result-meta">E{s.episode}</div>}
+                      {(s.full_season) && <div className="sub-result-meta" style={{ color: 'var(--muted)' }}>Full</div>}
+                      <div className="sub-result-meta" style={{ opacity: 0.6, fontSize: 10, textTransform: 'uppercase' }}>{s.source === 'opensubtitles' ? 'OS' : s.source === 'subsource' ? 'SS' : 'SDL'}</div>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -509,7 +525,7 @@ export default function Home() {
                 {errorL2 === 'not_found' && !blocksL2.length && !translatingL2 && (
                   <div className="ai-fallback-box">
                     <div className="ai-fallback-text">No {lang2Label} subtitles found.</div>
-                    <button className="fetch-btn ai-btn" onClick={() => translateFallback(lang2, setBlocksL2, setErrorL2, setTranslatingL2)}>
+                    <button className="fetch-btn ai-btn" onClick={() => translateFallback(lang2, setBlocksL2, setErrorL2, setTranslatingL2, setTranslateSourceL2)}>
                       ✨ AI Translate from English
                     </button>
                   </div>
@@ -520,11 +536,17 @@ export default function Home() {
                 {subResultsL2.length > 0 && (
                   <div>
                     <div className="ctrl-label">Pick a release</div>
-                    {subResultsL2.slice(0, 8).map((s, i) => (
+                    {subResultsL2
+                      .filter(s => !episode || !s.episode || s.episode === parseInt(episode) || s.full_season)
+                      .slice(0, 8)
+                      .map((s, i) => (
                       <div key={i} className={`sub-result-item ${selectedSubL2?.id === s.id ? 'selected' : ''}`} onClick={() => { setSelectedSubL2(s); loadSubContent(s, setLoadingL2, setBlocksL2, setErrorL2, subResultsL2) }}>
                         <div className="sub-result-name">{s.name}</div>
-                        {s.episode > 0 && <div className="sub-result-meta">E{s.episode}</div>}
-                        {(s.full_season || s.episode === 0) && <div className="sub-result-meta" style={{ color: 'var(--muted)' }}>Full</div>}
+                        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 2 }}>
+                          {s.episode > 0 && <div className="sub-result-meta">E{s.episode}</div>}
+                          {(s.full_season) && <div className="sub-result-meta" style={{ color: 'var(--muted)' }}>Full</div>}
+                          <div className="sub-result-meta" style={{ opacity: 0.6, fontSize: 10, textTransform: 'uppercase' }}>{s.source === 'opensubtitles' ? 'OS' : s.source === 'subsource' ? 'SS' : 'SDL'}</div>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -607,6 +629,7 @@ export default function Home() {
             translating={translatingL2}
             error={errorL2}
             onBlockChange={updateBlockL2}
+            translateSource={translateSourceL2}
             emptyIcon="🌍"
             emptyText={lang2 ? 'Second subtitle will appear here' : 'Select a second language'}
             emptySubText={lang2 ? `Find and select a ${lang2Label} release` : 'Optional — for dual-language SRT'}
