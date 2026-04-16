@@ -163,6 +163,7 @@ export default function Home() {
       if (selectedTitle.sd_id) params.append('sd_id', selectedTitle.sd_id)
       else if (selectedTitle.imdb_id) params.append('imdb_id', selectedTitle.imdb_id)
       else if (selectedTitle.tmdb_id) params.append('tmdb_id', selectedTitle.tmdb_id)
+      if (selectedTitle.title) params.append('title', selectedTitle.title)
       if (contentType === 'tv' && season) params.append('season', season)
       if (contentType === 'tv' && episode) params.append('episode', episode)
       const resp = await fetch(`/api/subtitles?${params}`)
@@ -229,6 +230,7 @@ export default function Home() {
       if (selectedTitle.sd_id) params.append('sd_id', selectedTitle.sd_id)
       else if (selectedTitle.imdb_id) params.append('imdb_id', selectedTitle.imdb_id)
       else if (selectedTitle.tmdb_id) params.append('tmdb_id', selectedTitle.tmdb_id)
+      if (selectedTitle.title) params.append('title', selectedTitle.title)
       if (contentType === 'tv' && season) params.append('season', season)
       if (contentType === 'tv' && episode) params.append('episode', episode)
 
