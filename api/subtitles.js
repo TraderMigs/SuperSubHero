@@ -154,71 +154,114 @@ async function fetchFromSubSource(params, SS_KEY) {
   const { imdb_id, tmdb_id, title, type, language, season, episode } = params
   const ssLang = SS_LANG_MAP[language] || language.toLowerCase()
 
-  // Step 1: Text search by title, then validate match by imdb_id or tmdb_id
-  if (!title) return []
+  if (!title && !imdb_id && !tmdb_id) return []
 
+  // Step 1: Search by title text (official API only supports text search)
+  // Use title if available, otherwise fall back to imdb_id as text query
+  const searchQuery = title || imdb_id || tmdb_id
   let movieId = null
+  let rawSearchData = null
 
-  const searchResp = await fetch(
-    `https://api.subsource.net/api/v1/movies/search?query=${encodeURIComponent(title)}`,
-    { headers: { 'X-API-Key': SS_KEY, Accept: 'application/json' } }
-  )
+  try {
+    const searchResp = await fetch(
+      `https://api.subsource.net/api/v1/movies/search?query=${encodeURIComponent(searchQuery)}`,
+      { headers: { 'X-API-Key': SS_KEY, Accept: 'application/json' } }
+    )
 
-  if (!searchResp.ok) throw new Error(`SubSource search error: ${searchResp.status}`)
-
-  const searchData = await searchResp.json()
-  const results = searchData?.data || []
-
-  // Validate: match by imdb_id or tmdb_id to ensure correct title
-  for (const r of results) {
-    const rImdb = (r.imdbId || r.imdb_id || '').toString().replace('tt', '')
-    const pImdb = (imdb_id || '').toString().replace('tt', '')
-    const rTmdb = (r.tmdbId || r.tmdb_id || '').toString()
-    const pTmdb = (tmdb_id || '').toString()
-
-    if ((pImdb && rImdb && rImdb === pImdb) || (pTmdb && rTmdb && rTmdb === pTmdb)) {
-      movieId = r.id
-      break
+    if (!searchResp.ok) {
+      console.error(`SubSource search HTTP error: ${searchResp.status}`)
+      return []
     }
+
+    rawSearchData = await searchResp.json()
+    console.log('SubSource search raw response keys:', Object.keys(rawSearchData || {}))
+
+    // Handle multiple possible response shapes
+    const results = rawSearchData?.data || rawSearchData?.results || rawSearchData?.movies || (Array.isArray(rawSearchData) ? rawSearchData : null)
+
+    if (!results || !results.length) {
+      console.error('SubSource search returned no results for query:', searchQuery, 'raw:', JSON.stringify(rawSearchData).slice(0, 200))
+      return []
+    }
+
+    console.log('SubSource search results count:', results.length, 'first result keys:', Object.keys(results[0] || {}))
+
+    // Validate match by imdb_id or tmdb_id if available
+    for (const r of results) {
+      const rImdb = (r.imdbId || r.imdb_id || r.imdb || '').toString().replace('tt', '')
+      const pImdb = (imdb_id || '').toString().replace('tt', '')
+      const rTmdb = (r.tmdbId || r.tmdb_id || r.tmdb || '').toString()
+      const pTmdb = (tmdb_id || '').toString()
+
+      if ((pImdb && rImdb && rImdb === pImdb) || (pTmdb && rTmdb && rTmdb === pTmdb)) {
+        movieId = r.id || r.movieId || r.movie_id
+        console.log('SubSource matched by ID, movieId:', movieId)
+        break
+      }
+    }
+
+    // Fall back to first result if no ID match
+    if (!movieId) {
+      const first = results[0]
+      movieId = first.id || first.movieId || first.movie_id
+      console.log('SubSource using first result, movieId:', movieId, 'title:', first.title || first.name)
+    }
+  } catch (err) {
+    console.error('SubSource search exception:', err.message)
+    return []
   }
 
-  // If no exact match, use first result (best guess when IDs not available)
-  if (!movieId && results.length > 0) {
-    movieId = results[0].id
+  if (!movieId) {
+    console.error('SubSource: could not determine movieId')
+    return []
   }
-
-  if (!movieId) return []
 
   // Step 2: Get subtitles for this movie/show
   const subQuery = new URLSearchParams({ language: ssLang })
   if (type === 'tv' && season) subQuery.append('season', season)
   if (type === 'tv' && episode) subQuery.append('episode', episode)
 
-  const subResp = await fetch(
-    `https://api.subsource.net/api/v1/subtitles?movieId=${movieId}&${subQuery}`,
-    { headers: { 'X-API-Key': SS_KEY, Accept: 'application/json' } }
-  )
+  try {
+    const subResp = await fetch(
+      `https://api.subsource.net/api/v1/subtitles?movieId=${movieId}&${subQuery}`,
+      { headers: { 'X-API-Key': SS_KEY, Accept: 'application/json' } }
+    )
 
-  if (!subResp.ok) throw new Error(`SubSource subtitles error: ${subResp.status}`)
+    if (!subResp.ok) {
+      console.error(`SubSource subtitles HTTP error: ${subResp.status}`)
+      return []
+    }
 
-  const subData = await subResp.json()
-  if (!subData?.data?.length) return []
+    const subData = await subResp.json()
+    console.log('SubSource subtitles raw keys:', Object.keys(subData || {}), 'count:', (subData?.data || subData?.results || subData?.subtitles || []).length)
 
-  return subData.data.map(s => ({
-    id: `ss_${s.id}`,
-    sd_id: null,
-    name: s.releaseName || s.name || 'Unknown release',
-    normalized_name: normalizeName(s.releaseName || s.name || ''),
-    url: null,
-    file_id: null,
-    ss_id: s.id,
-    source: 'subsource',
-    language,
-    author: s.uploadedBy || null,
-    season: s.season || null,
-    episode: s.episode || null,
-    full_season: s.fullSeason || false,
-  }))
+    // Handle multiple possible response shapes
+    const subs = subData?.data || subData?.results || subData?.subtitles || (Array.isArray(subData) ? subData : [])
+
+    if (!subs.length) {
+      console.log('SubSource: no subtitles found for movieId:', movieId, 'lang:', ssLang)
+      return []
+    }
+
+    return subs.map(s => ({
+      id: `ss_${s.id || s.subId || s.subtitleId}`,
+      sd_id: null,
+      name: s.releaseName || s.release_name || s.name || s.title || 'Unknown release',
+      normalized_name: normalizeName(s.releaseName || s.release_name || s.name || s.title || ''),
+      url: null,
+      file_id: null,
+      ss_id: s.id || s.subId || s.subtitleId,
+      source: 'subsource',
+      language,
+      author: s.uploadedBy || s.uploaded_by || s.uploader || null,
+      season: s.season || null,
+      episode: s.episode || null,
+      full_season: s.fullSeason || s.full_season || false,
+    })).filter(s => s.ss_id)
+  } catch (err) {
+    console.error('SubSource subtitles exception:', err.message)
+    return []
+  }
 }
 
 function mergeResults(subdlSubs, openSubs, ssSubs, episode) {
@@ -244,7 +287,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' })
   }
 
-  const { sd_id, imdb_id, tmdb_id, title, type = 'movie', language, season, episode } = req.query
+  const { sd_id, imdb_id, tmdb_id, type = 'movie', language, season, episode } = req.query
   if (!language) {
     return res.status(400).json({ error: 'language required' })
   }
@@ -252,7 +295,7 @@ export default async function handler(req, res) {
   const SUBDL_KEY = process.env.SUBDL_API_KEY
   const OS_KEY = process.env.OPENSUBTITLES_API_KEY
   const SS_KEY = process.env.SUBSOURCE_API_KEY
-  const params = { sd_id, imdb_id, tmdb_id, title, type, language, season, episode }
+  const params = { sd_id, imdb_id, tmdb_id, type, language, season, episode }
 
   const [subdlResult, openResult, ssResult] = await Promise.allSettled([
     fetchFromSubDL(params, SUBDL_KEY),
