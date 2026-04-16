@@ -177,22 +177,39 @@ export default function Home() {
     }
   }
 
-  const loadSubContent = async (sub, setLoading, setBlocks, setError) => {
+  const loadSubContent = async (sub, setLoading, setBlocks, setError, fallbackList) => {
     setLoading(true)
     setError('')
     setBlocks([])
-    try {
+    const tryFetch = async (url) => {
       const resp = await fetch('/api/fetch-sub', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: sub.url }),
+        body: JSON.stringify({ url }),
       })
       const data = await resp.json()
       if (data.error) throw new Error(data.error)
       const parsed = parseSrt(data.content)
       if (!parsed.length) throw new Error('Could not parse subtitle file')
+      return parsed
+    }
+    try {
+      const parsed = await tryFetch(sub.url)
       setBlocks(parsed)
     } catch (err) {
+      // Auto-retry with next available release
+      if (fallbackList && fallbackList.length > 0) {
+        for (const next of fallbackList) {
+          if (next.url === sub.url) continue
+          try {
+            const parsed = await tryFetch(next.url)
+            setBlocks(parsed)
+            setError('')
+            setLoading(false)
+            return
+          } catch { continue }
+        }
+      }
       setError(err.message)
     } finally {
       setLoading(false)
@@ -439,7 +456,7 @@ export default function Home() {
               <div>
                 <div className="ctrl-label">Pick a release</div>
                 {subResultsL1.slice(0, 8).map((s, i) => (
-                  <div key={i} className={`sub-result-item ${selectedSubL1?.id === s.id ? 'selected' : ''}`} onClick={() => { setSelectedSubL1(s); loadSubContent(s, setLoadingL1, setBlocksL1, setErrorL1) }}>
+                  <div key={i} className={`sub-result-item ${selectedSubL1?.id === s.id ? 'selected' : ''}`} onClick={() => { setSelectedSubL1(s); loadSubContent(s, setLoadingL1, setBlocksL1, setErrorL1, subResultsL1) }}>
                     <div className="sub-result-name">{s.name}</div>
                     {s.episode > 0 && <div className="sub-result-meta">E{s.episode}</div>}
                     {(s.full_season || s.episode === 0) && <div className="sub-result-meta" style={{ color: 'var(--muted)' }}>Full</div>}
@@ -477,7 +494,7 @@ export default function Home() {
                   <div>
                     <div className="ctrl-label">Pick a release</div>
                     {subResultsL2.slice(0, 8).map((s, i) => (
-                      <div key={i} className={`sub-result-item ${selectedSubL2?.id === s.id ? 'selected' : ''}`} onClick={() => { setSelectedSubL2(s); loadSubContent(s, setLoadingL2, setBlocksL2, setErrorL2) }}>
+                      <div key={i} className={`sub-result-item ${selectedSubL2?.id === s.id ? 'selected' : ''}`} onClick={() => { setSelectedSubL2(s); loadSubContent(s, setLoadingL2, setBlocksL2, setErrorL2, subResultsL2) }}>
                         <div className="sub-result-name">{s.name}</div>
                         {s.episode > 0 && <div className="sub-result-meta">E{s.episode}</div>}
                         {(s.full_season || s.episode === 0) && <div className="sub-result-meta" style={{ color: 'var(--muted)' }}>Full</div>}
@@ -644,13 +661,21 @@ export default function Home() {
                   <div className="video-sync-row">
                     <input
                       type="range"
-                      min="-10000"
-                      max="10000"
+                      min="-300000"
+                      max="300000"
                       step="100"
                       value={liveOffset}
                       onChange={e => setLiveOffset(Number(e.target.value))}
                       className="sync-slider"
                     />
+                    <input
+                      type="number"
+                      className="sync-input"
+                      value={(liveOffset/1000).toFixed(1)}
+                      step="0.1"
+                      onChange={e => setLiveOffset(Math.round(parseFloat(e.target.value || 0) * 1000))}
+                    />
+                    <span className="sync-unit">s</span>
                     <button className="sync-reset" onClick={() => setLiveOffset(0)} title="Reset">↺</button>
                   </div>
                 </div>
