@@ -241,7 +241,13 @@ export default function Home() {
       let englishContent = ''
       let lastDownloadError = 'Could not download English subtitles'
 
-      for (const candidate of listData.subtitles) {
+      // Sort: try OS and SubSource first (SubDL CDN is blocked from Vercel)
+      const sortedCandidates = [
+        ...listData.subtitles.filter(c => c.source !== 'subdl'),
+        ...listData.subtitles.filter(c => c.source === 'subdl'),
+      ]
+
+      for (const candidate of sortedCandidates) {
         const fetchResp = await fetch('/api/fetch-sub', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
