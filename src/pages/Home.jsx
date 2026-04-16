@@ -235,23 +235,33 @@ export default function Home() {
       const listData = await listResp.json()
       if (!listData.subtitles?.length) throw new Error('No English subtitles found to translate from')
 
-      const firstSub = listData.subtitles[0]
-      const fetchResp = await fetch('/api/fetch-sub', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          url: firstSub.url || null,
-          file_id: firstSub.file_id || null,
-        }),
-      })
-      const fetchData = await fetchResp.json()
-      if (!fetchData.success || fetchData.error) throw new Error(fetchData.error || 'Could not download English subtitles')
+      let englishContent = ''
+      let lastDownloadError = 'Could not download English subtitles'
+
+      for (const candidate of listData.subtitles) {
+        const fetchResp = await fetch('/api/fetch-sub', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            url: candidate.url || null,
+            file_id: candidate.file_id || null,
+          }),
+        })
+        const fetchData = await fetchResp.json()
+        if (fetchData.success && fetchData.content) {
+          englishContent = fetchData.content
+          break
+        }
+        lastDownloadError = fetchData.error || lastDownloadError
+      }
+
+      if (!englishContent) throw new Error(lastDownloadError)
 
       const targetLang = LANGUAGES.find(l => l.code === targetLangCode)?.label || targetLangCode
       const translateResp = await fetch('/api/translate-srt', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ srtContent: fetchData.content, targetLanguage: targetLang, targetLanguageCode: targetLangCode }),
+        body: JSON.stringify({ srtContent: englishContent, targetLanguage: targetLang, targetLanguageCode: targetLangCode }),
       })
       const translateData = await translateResp.json()
       if (translateData.error) throw new Error(translateData.error)
