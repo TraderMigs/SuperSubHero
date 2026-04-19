@@ -82,6 +82,7 @@ function UploadTranslateSection({
   onDownloadOriginal, onDownloadTranslated, onDownloadMerged,
   onDownloadOriginal2, onDownloadTranslated2, onDownloadMerged2,
   onReset, onReset2,
+  onUpdateBlock, onUpdateTranslated, onUpdateBlock2, onUpdateTranslated2,
 }) {
   const targetLangLabel = lang => LANGUAGES.find(l => l.code === lang)?.label || lang
 
@@ -114,7 +115,7 @@ function UploadTranslateSection({
     )
   }
 
-  const SubPanel = ({ blocks, label, translating, translateSource, error }) => {
+  const SubPanel = ({ blocks, label, translating, translateSource, error, onBlockChange }) => {
     const [elapsed, setElapsed] = React.useState(0)
     React.useEffect(() => {
       if (!translating) { setElapsed(0); return }
@@ -149,7 +150,12 @@ function UploadTranslateSection({
           {blocks.map((b, i) => (
             <div key={i} className="sub-line">
               <div className="sub-time">{b.start?.slice(0, 8)}</div>
-              <div className="sub-text" style={{ whiteSpace: 'pre-wrap' }}>{b.text}</div>
+              <textarea
+                className="sub-text"
+                value={b.text}
+                onChange={e => onBlockChange && onBlockChange(i, e.target.value)}
+                rows={b.text.split('\n').length}
+              />
             </div>
           ))}
         </div>
@@ -172,7 +178,7 @@ function UploadTranslateSection({
 
           {uploadedBlocks.length > 0 && (
             <>
-              <SubPanel blocks={uploadedBlocks} label="Original" translateSource="" error="" />
+              <SubPanel blocks={uploadedBlocks} label="Original" translateSource="" error="" onBlockChange={onUpdateBlock} />
 
               <div className="ctrl-label" style={{ marginTop: 16 }}>Translate to</div>
               <select
@@ -202,6 +208,7 @@ function UploadTranslateSection({
                 translating={uploadTranslating}
                 translateSource={uploadTranslateSource}
                 error={uploadError}
+                onBlockChange={onUpdateTranslated}
               />
 
               <div className="ctrl-label" style={{ marginTop: 16 }}>Sync Adjustment</div>
@@ -238,7 +245,7 @@ function UploadTranslateSection({
 
           {uploadedBlocks2.length > 0 && (
             <>
-              <SubPanel blocks={uploadedBlocks2} label="Original" translateSource="" error="" />
+              <SubPanel blocks={uploadedBlocks2} label="Original" translateSource="" error="" onBlockChange={onUpdateBlock2} />
 
               <div className="ctrl-label" style={{ marginTop: 16 }}>Translate to</div>
               <select
@@ -269,6 +276,7 @@ function UploadTranslateSection({
                 translating={uploadTranslating2}
                 translateSource={uploadTranslateSource2}
                 error={uploadError2}
+                onBlockChange={onUpdateTranslated2}
               />
 
               <div className="ctrl-label" style={{ marginTop: 16 }}>Sync Adjustment</div>
@@ -660,6 +668,11 @@ export default function Home() {
     downloadFile(srt, `${base}_merged_${langCode}.srt`)
   }
 
+  const updateUploadBlock = (idx, val) => { const u = [...uploadedBlocks]; u[idx] = { ...u[idx], text: val }; setUploadedBlocks(u) }
+  const updateUploadTranslatedBlock = (idx, val) => { const u = [...uploadTranslatedBlocks]; u[idx] = { ...u[idx], text: val }; setUploadTranslatedBlocks(u) }
+  const updateUploadBlock2 = (idx, val) => { const u = [...uploadedBlocks2]; u[idx] = { ...u[idx], text: val }; setUploadedBlocks2(u) }
+  const updateUploadTranslatedBlock2 = (idx, val) => { const u = [...uploadTranslatedBlocks2]; u[idx] = { ...u[idx], text: val }; setUploadTranslatedBlocks2(u) }
+
   const handleDownloadSingle = () => {
     if (!blocksL1.length) return
     const srt = buildSrt(applyOffset(blocksL1, offsetMs))
@@ -727,6 +740,10 @@ export default function Home() {
           onDownloadMerged2={() => handleUploadDownloadMerged(uploadedBlocks2, uploadTranslatedBlocks2, uploadTargetLang2, uploadFileName2, uploadOffsetMs2)}
           onReset={() => { setUploadedBlocks([]); setUploadTranslatedBlocks([]); setUploadFileName(''); setUploadError(''); setUploadTranslateSource('') }}
           onReset2={() => { setUploadedBlocks2([]); setUploadTranslatedBlocks2([]); setUploadFileName2(''); setUploadError2(''); setUploadTranslateSource2('') }}
+          onUpdateBlock={updateUploadBlock}
+          onUpdateTranslated={updateUploadTranslatedBlock}
+          onUpdateBlock2={updateUploadBlock2}
+          onUpdateTranslated2={updateUploadTranslatedBlock2}
         />
       )}
 
