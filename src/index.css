@@ -1079,3 +1079,23 @@ h1, h2, h3, h4 {
   color: var(--text);
   border-bottom: 1px solid var(--border);
 }
+
+/* FIXED HEIGHT SCROLLABLE SUB PANEL */
+.sub-panel-scroll {
+  height: 300px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.sub-panel-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+.sub-panel-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.sub-panel-scroll::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 2px;
+}
+.sub-panel-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
+}
