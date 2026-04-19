@@ -76,6 +76,7 @@ function UploadTranslateSection({
   uploadTranslatedBlocks, uploadTranslatedBlocks2,
   uploadError, uploadError2,
   uploadOffsetMs, setUploadOffsetMs,
+  uploadOffsetMs2, setUploadOffsetMs2,
   uploadTranslateSource, uploadTranslateSource2,
   onUpload, onUpload2, onTranslate, onTranslate2,
   onDownloadOriginal, onDownloadTranslated, onDownloadMerged,
@@ -166,8 +167,6 @@ function UploadTranslateSection({
 
           {uploadedBlocks.length > 0 && (
             <>
-              <SubPanel blocks={uploadedBlocks} label="Original" translateSource="" error="" />
-
               <div className="ctrl-label" style={{ marginTop: 16 }}>Translate to</div>
               <select
                 className="lang-select"
@@ -198,48 +197,40 @@ function UploadTranslateSection({
                 error={uploadError}
               />
 
-              {(uploadedBlocks.length > 0 || uploadTranslatedBlocks.length > 0) && (
-                <>
-                  <div className="ctrl-label" style={{ marginTop: 16 }}>Sync Adjustment</div>
-                  <div className="sync-wrap">
-                    <input type="range" min="-30000" max="30000" step="100" value={uploadOffsetMs}
-                      onChange={e => setUploadOffsetMs(Number(e.target.value))} className="sync-slider" />
-                    <div className="sync-display">
-                      <button className="sync-reset" onClick={() => setUploadOffsetMs(0)}>↺</button>
-                      <span className={`sync-value ${uploadOffsetMs > 0 ? 'delay' : uploadOffsetMs < 0 ? 'advance' : ''}`}>
-                        {uploadOffsetMs === 0 ? 'No offset' : uploadOffsetMs > 0 ? `+${(uploadOffsetMs/1000).toFixed(1)}s` : `${(uploadOffsetMs/1000).toFixed(1)}s`}
-                      </span>
-                    </div>
-                  </div>
+              <div className="ctrl-label" style={{ marginTop: 16 }}>Sync Adjustment</div>
+              <div className="sync-wrap">
+                <input type="range" min="-30000" max="30000" step="100" value={uploadOffsetMs}
+                  onChange={e => setUploadOffsetMs(Number(e.target.value))} className="sync-slider" />
+                <div className="sync-display">
+                  <button className="sync-reset" onClick={() => setUploadOffsetMs(0)}>↺</button>
+                  <span className={`sync-value ${uploadOffsetMs > 0 ? 'delay' : uploadOffsetMs < 0 ? 'advance' : ''}`}>
+                    {uploadOffsetMs === 0 ? 'No offset' : uploadOffsetMs > 0 ? `+${(uploadOffsetMs/1000).toFixed(1)}s` : `${(uploadOffsetMs/1000).toFixed(1)}s`}
+                  </span>
+                </div>
+              </div>
 
-                  <button className="dl-btn" style={{ marginTop: 8 }} onClick={onDownloadOriginal} disabled={!uploadedBlocks.length}>
-                    ↓ Download Original
+              {uploadTranslatedBlocks.length > 0 && (
+                <>
+                  <button className="dl-btn" style={{ marginTop: 8 }} onClick={onDownloadTranslated}>
+                    ↓ Download {targetLangLabel(uploadTargetLang)} SRT
                   </button>
-                  {uploadTranslatedBlocks.length > 0 && (
-                    <>
-                      <button className="dl-btn" style={{ marginTop: 6 }} onClick={onDownloadTranslated}>
-                        ↓ Download {targetLangLabel(uploadTargetLang)} Translation
-                      </button>
-                      <button className="dl-btn secondary" style={{ marginTop: 6 }} onClick={onDownloadMerged}>
-                        ↓ Download Merged (Original + {targetLangLabel(uploadTargetLang)})
-                      </button>
-                    </>
-                  )}
+                  <button className="dl-btn secondary" style={{ marginTop: 6 }} onClick={onDownloadMerged}>
+                    ↓ Download Merged Dual SRT ({targetLangLabel(uploadTargetLang)})
+                  </button>
                 </>
               )}
             </>
           )}
         </div>
 
-        {/* SLOT 2 */}
+        {/* SLOT 2 — only show after Slot 1 is loaded */}
+        {uploadedBlocks.length > 0 && (
         <div className="upload-card">
           <div className="upload-card-title">Subtitle 2 <span style={{ fontSize: 11, color: 'var(--muted)', fontWeight: 400 }}>(optional)</span></div>
           <SrtDropZone onFile={onUpload2} fileName={uploadFileName2} blocks={uploadedBlocks2} onReset={onReset2} label="Drop a second SRT file here" />
 
           {uploadedBlocks2.length > 0 && (
             <>
-              <SubPanel blocks={uploadedBlocks2} label="Original 2" translateSource="" error="" />
-
               <div className="ctrl-label" style={{ marginTop: 16 }}>Translate to</div>
               <select
                 className="lang-select"
@@ -247,21 +238,19 @@ function UploadTranslateSection({
                 onChange={e => setUploadTargetLang2(e.target.value)}
               >
                 <option value="">— Select language —</option>
-                {LANGUAGES.map(l => (
+                {LANGUAGES.filter(l => l.code !== 'EN').map(l => (
                   <option key={l.code} value={l.code}>{l.label}</option>
                 ))}
               </select>
 
-              {uploadTargetLang2 && (
-                <button
-                  className="fetch-btn ai-btn"
-                  style={{ marginTop: 8 }}
-                  onClick={onTranslate2}
-                  disabled={uploadTranslating2}
-                >
-                  {uploadTranslating2 ? 'Translating...' : `✨ Translate to ${targetLangLabel(uploadTargetLang2)}`}
-                </button>
-              )}
+              <button
+                className="fetch-btn ai-btn"
+                style={{ marginTop: 8 }}
+                onClick={onTranslate2}
+                disabled={uploadTranslating2 || !uploadTargetLang2}
+              >
+                {uploadTranslating2 ? 'Translating...' : uploadTargetLang2 ? `✨ Translate to ${targetLangLabel(uploadTargetLang2)}` : '— Pick a language above —'}
+              </button>
 
               {uploadError2 && <div className="status-bar error" style={{ marginTop: 8 }}>{uploadError2}</div>}
 
@@ -273,26 +262,32 @@ function UploadTranslateSection({
                 error={uploadError2}
               />
 
-              {(uploadedBlocks2.length > 0 || uploadTranslatedBlocks2.length > 0) && (
+              <div className="ctrl-label" style={{ marginTop: 16 }}>Sync Adjustment</div>
+              <div className="sync-wrap">
+                <input type="range" min="-30000" max="30000" step="100" value={uploadOffsetMs2}
+                  onChange={e => setUploadOffsetMs2(Number(e.target.value))} className="sync-slider" />
+                <div className="sync-display">
+                  <button className="sync-reset" onClick={() => setUploadOffsetMs2(0)}>↺</button>
+                  <span className={`sync-value ${uploadOffsetMs2 > 0 ? 'delay' : uploadOffsetMs2 < 0 ? 'advance' : ''}`}>
+                    {uploadOffsetMs2 === 0 ? 'No offset' : uploadOffsetMs2 > 0 ? `+${(uploadOffsetMs2/1000).toFixed(1)}s` : `${(uploadOffsetMs2/1000).toFixed(1)}s`}
+                  </span>
+                </div>
+              </div>
+
+              {uploadTranslatedBlocks2.length > 0 && (
                 <>
-                  <button className="dl-btn" style={{ marginTop: 12 }} onClick={onDownloadOriginal2} disabled={!uploadedBlocks2.length}>
-                    ↓ Download Original 2
+                  <button className="dl-btn" style={{ marginTop: 8 }} onClick={onDownloadTranslated2}>
+                    ↓ Download {targetLangLabel(uploadTargetLang2)} SRT
                   </button>
-                  {uploadTranslatedBlocks2.length > 0 && (
-                    <>
-                      <button className="dl-btn" style={{ marginTop: 6 }} onClick={onDownloadTranslated2}>
-                        ↓ Download {targetLangLabel(uploadTargetLang2)} Translation
-                      </button>
-                      <button className="dl-btn secondary" style={{ marginTop: 6 }} onClick={onDownloadMerged2}>
-                        ↓ Download Merged (Original 2 + {targetLangLabel(uploadTargetLang2)})
-                      </button>
-                    </>
-                  )}
+                  <button className="dl-btn secondary" style={{ marginTop: 6 }} onClick={onDownloadMerged2}>
+                    ↓ Download Merged Dual SRT ({targetLangLabel(uploadTargetLang2)})
+                  </button>
                 </>
               )}
             </>
           )}
         </div>
+        )}
       </div>
     </div>
   )
@@ -345,6 +340,7 @@ export default function Home() {
   const [uploadError, setUploadError] = useState('')
   const [uploadError2, setUploadError2] = useState('')
   const [uploadOffsetMs, setUploadOffsetMs] = useState(0)
+  const [uploadOffsetMs2, setUploadOffsetMs2] = useState(0)
   const [uploadTranslateSource, setUploadTranslateSource] = useState('')
   const [uploadTranslateSource2, setUploadTranslateSource2] = useState('')
 
@@ -640,16 +636,16 @@ export default function Home() {
     }
   }
 
-  const handleUploadDownloadSingle = (blocks, langCode, filename) => {
+  const handleUploadDownloadSingle = (blocks, langCode, filename, offsetMs = 0) => {
     if (!blocks.length) return
-    const srt = buildSrt(applyOffset(blocks, uploadOffsetMs))
+    const srt = buildSrt(applyOffset(blocks, offsetMs))
     const base = filename.replace(/\.srt$/i, '') || 'subtitle'
     downloadFile(srt, `${base}_${langCode}.srt`)
   }
 
-  const handleUploadDownloadMerged = (originalBlocks, translatedBlocks, langCode, filename) => {
+  const handleUploadDownloadMerged = (originalBlocks, translatedBlocks, langCode, filename, offsetMs = 0) => {
     if (!originalBlocks.length || !translatedBlocks.length) return
-    const merged = mergeSrts(applyOffset(originalBlocks, uploadOffsetMs), applyOffset(translatedBlocks, uploadOffsetMs))
+    const merged = mergeSrts(applyOffset(originalBlocks, offsetMs), applyOffset(translatedBlocks, offsetMs))
     const srt = buildSrt(merged)
     const base = filename.replace(/\.srt$/i, '') || 'subtitle'
     downloadFile(srt, `${base}_merged_${langCode}.srt`)
@@ -706,6 +702,8 @@ export default function Home() {
           uploadError2={uploadError2}
           uploadOffsetMs={uploadOffsetMs}
           setUploadOffsetMs={setUploadOffsetMs}
+          uploadOffsetMs2={uploadOffsetMs2}
+          setUploadOffsetMs2={setUploadOffsetMs2}
           uploadTranslateSource={uploadTranslateSource}
           uploadTranslateSource2={uploadTranslateSource2}
           onUpload={(file) => handleUploadSrt(file, setUploadedBlocks, setUploadFileName)}
@@ -713,11 +711,11 @@ export default function Home() {
           onTranslate={() => handleUploadTranslate(uploadedBlocks, uploadTargetLang, setUploadTranslating, setUploadTranslatedBlocks, setUploadError, setUploadTranslateSource)}
           onTranslate2={() => handleUploadTranslate(uploadedBlocks2, uploadTargetLang2, setUploadTranslating2, setUploadTranslatedBlocks2, setUploadError2, setUploadTranslateSource2)}
           onDownloadOriginal={() => handleUploadDownloadSingle(uploadedBlocks, 'original', uploadFileName)}
-          onDownloadTranslated={() => handleUploadDownloadSingle(uploadTranslatedBlocks, uploadTargetLang, uploadFileName)}
-          onDownloadMerged={() => handleUploadDownloadMerged(uploadedBlocks, uploadTranslatedBlocks, uploadTargetLang, uploadFileName)}
+          onDownloadTranslated={() => handleUploadDownloadSingle(uploadTranslatedBlocks, uploadTargetLang, uploadFileName, uploadOffsetMs)}
+          onDownloadMerged={() => handleUploadDownloadMerged(uploadedBlocks, uploadTranslatedBlocks, uploadTargetLang, uploadFileName, uploadOffsetMs)}
           onDownloadOriginal2={() => handleUploadDownloadSingle(uploadedBlocks2, 'original', uploadFileName2)}
-          onDownloadTranslated2={() => handleUploadDownloadSingle(uploadTranslatedBlocks2, uploadTargetLang2, uploadFileName2)}
-          onDownloadMerged2={() => handleUploadDownloadMerged(uploadedBlocks2, uploadTranslatedBlocks2, uploadTargetLang2, uploadFileName2)}
+          onDownloadTranslated2={() => handleUploadDownloadSingle(uploadTranslatedBlocks2, uploadTargetLang2, uploadFileName2, uploadOffsetMs2)}
+          onDownloadMerged2={() => handleUploadDownloadMerged(uploadedBlocks2, uploadTranslatedBlocks2, uploadTargetLang2, uploadFileName2, uploadOffsetMs2)}
           onReset={() => { setUploadedBlocks([]); setUploadTranslatedBlocks([]); setUploadFileName(''); setUploadError(''); setUploadTranslateSource('') }}
           onReset2={() => { setUploadedBlocks2([]); setUploadTranslatedBlocks2([]); setUploadFileName2(''); setUploadError2(''); setUploadTranslateSource2('') }}
         />
