@@ -167,6 +167,8 @@ function UploadTranslateSection({
 
           {uploadedBlocks.length > 0 && (
             <>
+              <SubPanel blocks={uploadedBlocks} label="Original" translateSource="" error="" />
+
               <div className="ctrl-label" style={{ marginTop: 16 }}>Translate to</div>
               <select
                 className="lang-select"
@@ -231,6 +233,8 @@ function UploadTranslateSection({
 
           {uploadedBlocks2.length > 0 && (
             <>
+              <SubPanel blocks={uploadedBlocks2} label="Original" translateSource="" error="" />
+
               <div className="ctrl-label" style={{ marginTop: 16 }}>Translate to</div>
               <select
                 className="lang-select"
