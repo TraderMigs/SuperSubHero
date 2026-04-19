@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react'
-import { LANGUAGES } from '../lib/languages.js'
+import { LANGUAGES, SEARCH_LANGUAGES } from '../lib/languages.js'
 import { parseSrt, buildSrt, mergeSrts, downloadFile, applyOffset } from '../lib/srt.js'
 
 const PREVIEW_LINES = [
@@ -69,6 +69,235 @@ function CollapsiblePanel({ title, langLabel, blocks, loading, translating, erro
   )
 }
 
+function UploadTranslateSection({
+  uploadedBlocks, uploadedBlocks2, uploadFileName, uploadFileName2,
+  uploadTargetLang, setUploadTargetLang, uploadTargetLang2, setUploadTargetLang2,
+  uploadTranslating, uploadTranslating2,
+  uploadTranslatedBlocks, uploadTranslatedBlocks2,
+  uploadError, uploadError2,
+  uploadOffsetMs, setUploadOffsetMs,
+  uploadTranslateSource, uploadTranslateSource2,
+  onUpload, onUpload2, onTranslate, onTranslate2,
+  onDownloadOriginal, onDownloadTranslated, onDownloadMerged,
+  onDownloadOriginal2, onDownloadTranslated2, onDownloadMerged2,
+  onReset, onReset2,
+}) {
+  const targetLangLabel = lang => LANGUAGES.find(l => l.code === lang)?.label || lang
+
+  const SrtDropZone = ({ onFile, fileName, blocks, onReset: resetFn, label }) => {
+    const [dragging, setDragging] = React.useState(false)
+    if (blocks.length > 0) {
+      return (
+        <div className="upload-file-loaded">
+          <span style={{ fontSize: 18 }}>📄</span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontWeight: 500, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{fileName}</div>
+            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>{blocks.length} lines loaded</div>
+          </div>
+          <button className="upload-reset-btn" onClick={resetFn}>✕</button>
+        </div>
+      )
+    }
+    return (
+      <div
+        className={`upload-dropzone ${dragging ? 'dragging' : ''}`}
+        onDragOver={e => { e.preventDefault(); setDragging(true) }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={e => { e.preventDefault(); setDragging(false); const f = e.dataTransfer.files[0]; if (f) onFile(f) }}
+        onClick={() => { const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.srt,.ass,.vtt'; inp.onchange = e => { if (e.target.files[0]) onFile(e.target.files[0]) }; inp.click() }}
+      >
+        <div style={{ fontSize: 28, marginBottom: 6 }}>⬆</div>
+        <div style={{ fontWeight: 500 }}>{label || 'Drop your SRT file here'}</div>
+        <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>or click to browse · .srt .ass .vtt</div>
+      </div>
+    )
+  }
+
+  const SubPanel = ({ blocks, label, translating, translateSource, error }) => {
+    const [open, setOpen] = React.useState(false)
+    if (translating) return (
+      <div className="upload-sub-panel">
+        <div className="panel-empty" style={{ padding: '1.5rem' }}>
+          <div className="spinner" style={{ width: 24, height: 24, borderWidth: 3 }} />
+          <div>Translating to {label}...</div>
+          <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>~30 seconds for a full episode</div>
+        </div>
+      </div>
+    )
+    if (!blocks.length) return null
+    return (
+      <div className="upload-sub-panel">
+        <div className="upload-sub-header" onClick={() => setOpen(o => !o)} style={{ cursor: 'pointer' }}>
+          <div>
+            <span style={{ fontWeight: 500 }}>{label}</span>
+            <span style={{ fontSize: 12, color: 'var(--muted)', marginLeft: 8 }}>{blocks.length} lines</span>
+            {translateSource && <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>{translateSource}</div>}
+          </div>
+          <span style={{ fontSize: 12 }}>{open ? '▲ Collapse' : '▼ Preview'}</span>
+        </div>
+        {error && <div className="status-bar error" style={{ margin: '0 16px 12px' }}>{error}</div>}
+        {open && (
+          <div className="panel-body" style={{ maxHeight: 280 }}>
+            {blocks.slice(0, 80).map((b, i) => (
+              <div key={i} className="sub-line">
+                <div className="sub-time">{b.start?.slice(0, 8)}</div>
+                <div className="sub-text" style={{ whiteSpace: 'pre-wrap' }}>{b.text}</div>
+              </div>
+            ))}
+            {blocks.length > 80 && <div style={{ textAlign: 'center', fontSize: 12, color: 'var(--muted)', padding: '8px 0' }}>...and {blocks.length - 80} more lines</div>}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <div className="upload-wrap">
+      <div className="hero" style={{ paddingBottom: '1.5rem' }}>
+        <h1>Upload & Translate<br /><em>Any Subtitle File</em></h1>
+        <p>Upload an SRT, pick any of 100+ languages, get an AI translation synced and ready to download.</p>
+      </div>
+
+      <div className="upload-grid">
+        {/* SLOT 1 */}
+        <div className="upload-card">
+          <div className="upload-card-title">Subtitle 1</div>
+          <SrtDropZone onFile={onUpload} fileName={uploadFileName} blocks={uploadedBlocks} onReset={onReset} />
+
+          {uploadedBlocks.length > 0 && (
+            <>
+              <SubPanel blocks={uploadedBlocks} label="Original" translateSource="" error="" />
+
+              <div className="ctrl-label" style={{ marginTop: 16 }}>Translate to</div>
+              <select
+                className="lang-select"
+                value={uploadTargetLang}
+                onChange={e => setUploadTargetLang(e.target.value)}
+              >
+                {LANGUAGES.filter(l => l.code !== 'EN').map(l => (
+                  <option key={l.code} value={l.code}>{l.label}</option>
+                ))}
+              </select>
+
+              <button
+                className="fetch-btn ai-btn"
+                style={{ marginTop: 8 }}
+                onClick={onTranslate}
+                disabled={uploadTranslating}
+              >
+                {uploadTranslating ? 'Translating...' : `✨ Translate to ${targetLangLabel(uploadTargetLang)}`}
+              </button>
+
+              {uploadError && <div className="status-bar error" style={{ marginTop: 8 }}>{uploadError}</div>}
+
+              <SubPanel
+                blocks={uploadTranslatedBlocks}
+                label={targetLangLabel(uploadTargetLang)}
+                translating={uploadTranslating}
+                translateSource={uploadTranslateSource}
+                error={uploadError}
+              />
+
+              {(uploadedBlocks.length > 0 || uploadTranslatedBlocks.length > 0) && (
+                <>
+                  <div className="ctrl-label" style={{ marginTop: 16 }}>Sync Adjustment</div>
+                  <div className="sync-wrap">
+                    <input type="range" min="-30000" max="30000" step="100" value={uploadOffsetMs}
+                      onChange={e => setUploadOffsetMs(Number(e.target.value))} className="sync-slider" />
+                    <div className="sync-display">
+                      <button className="sync-reset" onClick={() => setUploadOffsetMs(0)}>↺</button>
+                      <span className={`sync-value ${uploadOffsetMs > 0 ? 'delay' : uploadOffsetMs < 0 ? 'advance' : ''}`}>
+                        {uploadOffsetMs === 0 ? 'No offset' : uploadOffsetMs > 0 ? `+${(uploadOffsetMs/1000).toFixed(1)}s` : `${(uploadOffsetMs/1000).toFixed(1)}s`}
+                      </span>
+                    </div>
+                  </div>
+
+                  <button className="dl-btn" style={{ marginTop: 8 }} onClick={onDownloadOriginal} disabled={!uploadedBlocks.length}>
+                    ↓ Download Original
+                  </button>
+                  {uploadTranslatedBlocks.length > 0 && (
+                    <>
+                      <button className="dl-btn" style={{ marginTop: 6 }} onClick={onDownloadTranslated}>
+                        ↓ Download {targetLangLabel(uploadTargetLang)} Translation
+                      </button>
+                      <button className="dl-btn secondary" style={{ marginTop: 6 }} onClick={onDownloadMerged}>
+                        ↓ Download Merged (Original + {targetLangLabel(uploadTargetLang)})
+                      </button>
+                    </>
+                  )}
+                </>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* SLOT 2 */}
+        <div className="upload-card">
+          <div className="upload-card-title">Subtitle 2 <span style={{ fontSize: 11, color: 'var(--muted)', fontWeight: 400 }}>(optional)</span></div>
+          <SrtDropZone onFile={onUpload2} fileName={uploadFileName2} blocks={uploadedBlocks2} onReset={onReset2} label="Drop a second SRT file here" />
+
+          {uploadedBlocks2.length > 0 && (
+            <>
+              <SubPanel blocks={uploadedBlocks2} label="Original 2" translateSource="" error="" />
+
+              <div className="ctrl-label" style={{ marginTop: 16 }}>Translate to</div>
+              <select
+                className="lang-select"
+                value={uploadTargetLang2}
+                onChange={e => setUploadTargetLang2(e.target.value)}
+              >
+                <option value="">— Select language —</option>
+                {LANGUAGES.map(l => (
+                  <option key={l.code} value={l.code}>{l.label}</option>
+                ))}
+              </select>
+
+              {uploadTargetLang2 && (
+                <button
+                  className="fetch-btn ai-btn"
+                  style={{ marginTop: 8 }}
+                  onClick={onTranslate2}
+                  disabled={uploadTranslating2}
+                >
+                  {uploadTranslating2 ? 'Translating...' : `✨ Translate to ${targetLangLabel(uploadTargetLang2)}`}
+                </button>
+              )}
+
+              {uploadError2 && <div className="status-bar error" style={{ marginTop: 8 }}>{uploadError2}</div>}
+
+              <SubPanel
+                blocks={uploadTranslatedBlocks2}
+                label={targetLangLabel(uploadTargetLang2)}
+                translating={uploadTranslating2}
+                translateSource={uploadTranslateSource2}
+                error={uploadError2}
+              />
+
+              {(uploadedBlocks2.length > 0 || uploadTranslatedBlocks2.length > 0) && (
+                <>
+                  <button className="dl-btn" style={{ marginTop: 12 }} onClick={onDownloadOriginal2} disabled={!uploadedBlocks2.length}>
+                    ↓ Download Original 2
+                  </button>
+                  {uploadTranslatedBlocks2.length > 0 && (
+                    <>
+                      <button className="dl-btn" style={{ marginTop: 6 }} onClick={onDownloadTranslated2}>
+                        ↓ Download {targetLangLabel(uploadTargetLang2)} Translation
+                      </button>
+                      <button className="dl-btn secondary" style={{ marginTop: 6 }} onClick={onDownloadMerged2}>
+                        ↓ Download Merged (Original 2 + {targetLangLabel(uploadTargetLang2)})
+                      </button>
+                    </>
+                  )}
+                </>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function Home() {
   const [query, setQuery] = useState('')
   const [contentType, setContentType] = useState('movie')
@@ -100,6 +329,24 @@ export default function Home() {
   const [translatingL2, setTranslatingL2] = useState(false)
   const [translateSourceL1, setTranslateSourceL1] = useState('')
   const [translateSourceL2, setTranslateSourceL2] = useState('')
+
+  // Upload & Translate mode
+  const [pageMode, setPageMode] = useState('search') // 'search' | 'upload'
+  const [uploadedBlocks, setUploadedBlocks] = useState([])
+  const [uploadedBlocks2, setUploadedBlocks2] = useState([])
+  const [uploadFileName, setUploadFileName] = useState('')
+  const [uploadFileName2, setUploadFileName2] = useState('')
+  const [uploadTargetLang, setUploadTargetLang] = useState('TH')
+  const [uploadTargetLang2, setUploadTargetLang2] = useState('')
+  const [uploadTranslating, setUploadTranslating] = useState(false)
+  const [uploadTranslating2, setUploadTranslating2] = useState(false)
+  const [uploadTranslatedBlocks, setUploadTranslatedBlocks] = useState([])
+  const [uploadTranslatedBlocks2, setUploadTranslatedBlocks2] = useState([])
+  const [uploadError, setUploadError] = useState('')
+  const [uploadError2, setUploadError2] = useState('')
+  const [uploadOffsetMs, setUploadOffsetMs] = useState(0)
+  const [uploadTranslateSource, setUploadTranslateSource] = useState('')
+  const [uploadTranslateSource2, setUploadTranslateSource2] = useState('')
 
   const [offsetMs, setOffsetMs] = useState(0)
 
@@ -354,6 +601,60 @@ export default function Home() {
     return () => cancelAnimationFrame(animFrameRef.current)
   }, [videoUrl, blocksL1, blocksL2, offsetMs, liveOffset])
 
+  const handleUploadSrt = (file, setBlocks, setFileName) => {
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = e => {
+      const parsed = parseSrt(e.target.result)
+      if (!parsed.length) { setUploadError('Could not parse SRT file — check the file format.'); return }
+      setBlocks(parsed)
+      setFileName(file.name)
+      setUploadError('')
+    }
+    reader.readAsText(file)
+  }
+
+  const handleUploadTranslate = async (blocks, targetLangCode, setTranslating, setTranslatedBlocks, setError, setTranslateSource) => {
+    if (!blocks.length) return
+    setTranslating(true)
+    setError('')
+    setTranslatedBlocks([])
+    try {
+      const srtContent = buildSrt(blocks)
+      const targetLang = LANGUAGES.find(l => l.code === targetLangCode)?.label || targetLangCode
+      const resp = await fetch('/api/translate-srt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ srtContent, targetLanguage: targetLang, targetLanguageCode: targetLangCode }),
+      })
+      const data = await resp.json()
+      if (data.error) throw new Error(data.error)
+      const parsed = parseSrt(data.content)
+      if (!parsed.length) throw new Error('Translation produced empty result')
+      setTranslatedBlocks(parsed)
+      setTranslateSource(`Translated to: ${targetLang} via AI`)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setTranslating(false)
+    }
+  }
+
+  const handleUploadDownloadSingle = (blocks, langCode, filename) => {
+    if (!blocks.length) return
+    const srt = buildSrt(applyOffset(blocks, uploadOffsetMs))
+    const base = filename.replace(/\.srt$/i, '') || 'subtitle'
+    downloadFile(srt, `${base}_${langCode}.srt`)
+  }
+
+  const handleUploadDownloadMerged = (originalBlocks, translatedBlocks, langCode, filename) => {
+    if (!originalBlocks.length || !translatedBlocks.length) return
+    const merged = mergeSrts(applyOffset(originalBlocks, uploadOffsetMs), applyOffset(translatedBlocks, uploadOffsetMs))
+    const srt = buildSrt(merged)
+    const base = filename.replace(/\.srt$/i, '') || 'subtitle'
+    downloadFile(srt, `${base}_merged_${langCode}.srt`)
+  }
+
   const handleDownloadSingle = () => {
     if (!blocksL1.length) return
     const srt = buildSrt(applyOffset(blocksL1, offsetMs))
@@ -381,7 +682,48 @@ export default function Home() {
           <img src="/logo.png" alt="SuperSubHero" className="nav-logo-img" />
         </div>
         <div className="nav-sub">Subtitle Search Engine</div>
+        <div className="nav-mode-toggle">
+          <button className={`nav-mode-btn ${pageMode === 'search' ? 'active' : ''}`} onClick={() => setPageMode('search')}>🔍 Search</button>
+          <button className={`nav-mode-btn ${pageMode === 'upload' ? 'active' : ''}`} onClick={() => setPageMode('upload')}>⬆ Upload & Translate</button>
+        </div>
       </nav>
+
+      {pageMode === 'upload' && (
+        <UploadTranslateSection
+          uploadedBlocks={uploadedBlocks}
+          uploadedBlocks2={uploadedBlocks2}
+          uploadFileName={uploadFileName}
+          uploadFileName2={uploadFileName2}
+          uploadTargetLang={uploadTargetLang}
+          setUploadTargetLang={setUploadTargetLang}
+          uploadTargetLang2={uploadTargetLang2}
+          setUploadTargetLang2={setUploadTargetLang2}
+          uploadTranslating={uploadTranslating}
+          uploadTranslating2={uploadTranslating2}
+          uploadTranslatedBlocks={uploadTranslatedBlocks}
+          uploadTranslatedBlocks2={uploadTranslatedBlocks2}
+          uploadError={uploadError}
+          uploadError2={uploadError2}
+          uploadOffsetMs={uploadOffsetMs}
+          setUploadOffsetMs={setUploadOffsetMs}
+          uploadTranslateSource={uploadTranslateSource}
+          uploadTranslateSource2={uploadTranslateSource2}
+          onUpload={(file) => handleUploadSrt(file, setUploadedBlocks, setUploadFileName)}
+          onUpload2={(file) => handleUploadSrt(file, setUploadedBlocks2, setUploadFileName2)}
+          onTranslate={() => handleUploadTranslate(uploadedBlocks, uploadTargetLang, setUploadTranslating, setUploadTranslatedBlocks, setUploadError, setUploadTranslateSource)}
+          onTranslate2={() => handleUploadTranslate(uploadedBlocks2, uploadTargetLang2, setUploadTranslating2, setUploadTranslatedBlocks2, setUploadError2, setUploadTranslateSource2)}
+          onDownloadOriginal={() => handleUploadDownloadSingle(uploadedBlocks, 'original', uploadFileName)}
+          onDownloadTranslated={() => handleUploadDownloadSingle(uploadTranslatedBlocks, uploadTargetLang, uploadFileName)}
+          onDownloadMerged={() => handleUploadDownloadMerged(uploadedBlocks, uploadTranslatedBlocks, uploadTargetLang, uploadFileName)}
+          onDownloadOriginal2={() => handleUploadDownloadSingle(uploadedBlocks2, 'original', uploadFileName2)}
+          onDownloadTranslated2={() => handleUploadDownloadSingle(uploadTranslatedBlocks2, uploadTargetLang2, uploadFileName2)}
+          onDownloadMerged2={() => handleUploadDownloadMerged(uploadedBlocks2, uploadTranslatedBlocks2, uploadTargetLang2, uploadFileName2)}
+          onReset={() => { setUploadedBlocks([]); setUploadTranslatedBlocks([]); setUploadFileName(''); setUploadError(''); setUploadTranslateSource('') }}
+          onReset2={() => { setUploadedBlocks2([]); setUploadTranslatedBlocks2([]); setUploadFileName2(''); setUploadError2(''); setUploadTranslateSource2('') }}
+        />
+      )}
+
+      {pageMode === 'search' && (<>
 
       {/* HERO */}
       <div className="hero">
@@ -472,7 +814,7 @@ export default function Home() {
 
             <div className="ctrl-label">Primary Language</div>
             <select className="lang-select" value={lang1} onChange={e => { setLang1(e.target.value); setBlocksL1([]); setSubResultsL1([]); setSelectedSubL1(null); setErrorL1('') }}>
-              {LANGUAGES.map(l => <option key={l.code} value={l.code}>{l.label}</option>)}
+              {SEARCH_LANGUAGES.map(l => <option key={l.code} value={l.code}>{l.label}</option>)}
             </select>
             <button className="fetch-btn" onClick={() => fetchSubtitleList(lang1, setSubResultsL1, setFetchingL1, setErrorL1)} disabled={fetchingL1 || !selectedTitle}>
               {fetchingL1 ? 'Searching...' : `Find ${lang1Label} Subtitles`}
@@ -513,7 +855,7 @@ export default function Home() {
             <div className="ctrl-label">Second Language (Optional)</div>
             <select className="lang-select" value={lang2} onChange={e => { setLang2(e.target.value); setBlocksL2([]); setSubResultsL2([]); setSelectedSubL2(null); setErrorL2('') }}>
               <option value="">— None —</option>
-              {LANGUAGES.filter(l => l.code !== lang1).map(l => <option key={l.code} value={l.code}>{l.label}</option>)}
+              {SEARCH_LANGUAGES.filter(l => l.code !== lang1).map(l => <option key={l.code} value={l.code}>{l.label}</option>)}
             </select>
 
             {lang2 && (
@@ -743,5 +1085,6 @@ export default function Home() {
       )}
 
     </div>
+  </>)}
   )
 }
