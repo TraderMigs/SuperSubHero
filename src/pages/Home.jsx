@@ -115,39 +115,44 @@ function UploadTranslateSection({
   }
 
   const SubPanel = ({ blocks, label, translating, translateSource, error }) => {
-    const [open, setOpen] = React.useState(false)
+    const [elapsed, setElapsed] = React.useState(0)
+    React.useEffect(() => {
+      if (!translating) { setElapsed(0); return }
+      const t = setInterval(() => setElapsed(s => s + 1), 1000)
+      return () => clearInterval(t)
+    }, [translating])
+
+    const fmt = s => s < 60 ? `${s}s` : `${Math.floor(s/60)}m ${s%60}s`
+
     if (translating) return (
       <div className="upload-sub-panel">
         <div className="panel-empty" style={{ padding: '1.5rem' }}>
           <div className="spinner" style={{ width: 24, height: 24, borderWidth: 3 }} />
-          <div>Translating to {label}...</div>
-          <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>~30 seconds for a full episode</div>
+          <div style={{ fontWeight: 500, marginTop: 8 }}>AI is processing magic...brb</div>
+          <div style={{ fontSize: 12, color: 'var(--accent)', marginTop: 6, fontFamily: 'monospace' }}>⏱ {fmt(elapsed)}</div>
+          <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>Large files may take 3–8 mins</div>
         </div>
       </div>
     )
     if (!blocks.length) return null
     return (
       <div className="upload-sub-panel">
-        <div className="upload-sub-header" onClick={() => setOpen(o => !o)} style={{ cursor: 'pointer' }}>
+        <div className="upload-sub-header">
           <div>
             <span style={{ fontWeight: 500 }}>{label}</span>
             <span style={{ fontSize: 12, color: 'var(--muted)', marginLeft: 8 }}>{blocks.length} lines</span>
             {translateSource && <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>{translateSource}</div>}
           </div>
-          <span style={{ fontSize: 12 }}>{open ? '▲ Collapse' : '▼ Preview'}</span>
         </div>
         {error && <div className="status-bar error" style={{ margin: '0 16px 12px' }}>{error}</div>}
-        {open && (
-          <div className="panel-body" style={{ maxHeight: 280 }}>
-            {blocks.slice(0, 80).map((b, i) => (
-              <div key={i} className="sub-line">
-                <div className="sub-time">{b.start?.slice(0, 8)}</div>
-                <div className="sub-text" style={{ whiteSpace: 'pre-wrap' }}>{b.text}</div>
-              </div>
-            ))}
-            {blocks.length > 80 && <div style={{ textAlign: 'center', fontSize: 12, color: 'var(--muted)', padding: '8px 0' }}>...and {blocks.length - 80} more lines</div>}
-          </div>
-        )}
+        <div className="panel-body sub-panel-scroll">
+          {blocks.map((b, i) => (
+            <div key={i} className="sub-line">
+              <div className="sub-time">{b.start?.slice(0, 8)}</div>
+              <div className="sub-text" style={{ whiteSpace: 'pre-wrap' }}>{b.text}</div>
+            </div>
+          ))}
+        </div>
       </div>
     )
   }
