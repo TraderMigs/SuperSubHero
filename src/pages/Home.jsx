@@ -69,6 +69,83 @@ function CollapsiblePanel({ title, langLabel, blocks, loading, translating, erro
   )
 }
 
+function SrtDropZone({ onFile, fileName, blocks, onReset: resetFn, label }) {
+  const [dragging, setDragging] = React.useState(false)
+  if (blocks.length > 0) {
+    return (
+      <div className="upload-file-loaded">
+        <span style={{ fontSize: 18 }}>📄</span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 500, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{fileName}</div>
+          <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>{blocks.length} lines loaded</div>
+        </div>
+        <button className="upload-reset-btn" onClick={resetFn}>✕</button>
+      </div>
+    )
+  }
+  return (
+    <div
+      className={`upload-dropzone ${dragging ? 'dragging' : ''}`}
+      onDragOver={e => { e.preventDefault(); setDragging(true) }}
+      onDragLeave={() => setDragging(false)}
+      onDrop={e => { e.preventDefault(); setDragging(false); const f = e.dataTransfer.files[0]; if (f) onFile(f) }}
+      onClick={() => { const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.srt,.ass,.vtt'; inp.onchange = e => { if (e.target.files[0]) onFile(e.target.files[0]) }; inp.click() }}
+    >
+      <div style={{ fontSize: 28, marginBottom: 6 }}>⬆</div>
+      <div style={{ fontWeight: 500 }}>{label || 'Drop your SRT file here'}</div>
+      <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>or click to browse · .srt .ass .vtt</div>
+    </div>
+  )
+}
+
+function SubPanel({ blocks, label, translating, translateSource, error, onBlockChange }) {
+  const [elapsed, setElapsed] = React.useState(0)
+  React.useEffect(() => {
+    if (!translating) { setElapsed(0); return }
+    const t = setInterval(() => setElapsed(s => s + 1), 1000)
+    return () => clearInterval(t)
+  }, [translating])
+
+  const fmt = s => s < 60 ? `${s}s` : `${Math.floor(s/60)}m ${s%60}s`
+
+  if (translating) return (
+    <div className="upload-sub-panel">
+      <div className="panel-empty" style={{ padding: '1.5rem' }}>
+        <div className="spinner" style={{ width: 24, height: 24, borderWidth: 3 }} />
+        <div style={{ fontWeight: 500, marginTop: 8 }}>AI is processing magic...brb</div>
+        <div style={{ fontSize: 12, color: 'var(--accent)', marginTop: 6, fontFamily: 'monospace' }}>⏱ {fmt(elapsed)}</div>
+        <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>Large files may take 3–8 mins</div>
+      </div>
+    </div>
+  )
+  if (!blocks.length) return null
+  return (
+    <div className="upload-sub-panel">
+      <div className="upload-sub-header">
+        <div>
+          <span style={{ fontWeight: 500 }}>{label}</span>
+          <span style={{ fontSize: 12, color: 'var(--muted)', marginLeft: 8 }}>{blocks.length} lines</span>
+          {translateSource && <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>{translateSource}</div>}
+        </div>
+      </div>
+      {error && <div className="status-bar error" style={{ margin: '0 16px 12px' }}>{error}</div>}
+      <div className="panel-body sub-panel-scroll">
+        {blocks.map((b, i) => (
+          <div key={i} className="sub-line">
+            <div className="sub-time">{b.start?.slice(0, 8)}</div>
+            <textarea
+              className="sub-text"
+              value={b.text}
+              onChange={e => onBlockChange && onBlockChange(i, e.target.value)}
+              rows={b.text.split('\n').length}
+            />
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function UploadTranslateSection({
   uploadedBlocks, uploadedBlocks2, uploadFileName, uploadFileName2,
   uploadTargetLang, setUploadTargetLang, uploadTargetLang2, setUploadTargetLang2,
@@ -85,83 +162,6 @@ function UploadTranslateSection({
   onUpdateBlock, onUpdateTranslated, onUpdateBlock2, onUpdateTranslated2,
 }) {
   const targetLangLabel = lang => LANGUAGES.find(l => l.code === lang)?.label || lang
-
-  const SrtDropZone = ({ onFile, fileName, blocks, onReset: resetFn, label }) => {
-    const [dragging, setDragging] = React.useState(false)
-    if (blocks.length > 0) {
-      return (
-        <div className="upload-file-loaded">
-          <span style={{ fontSize: 18 }}>📄</span>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontWeight: 500, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{fileName}</div>
-            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>{blocks.length} lines loaded</div>
-          </div>
-          <button className="upload-reset-btn" onClick={resetFn}>✕</button>
-        </div>
-      )
-    }
-    return (
-      <div
-        className={`upload-dropzone ${dragging ? 'dragging' : ''}`}
-        onDragOver={e => { e.preventDefault(); setDragging(true) }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={e => { e.preventDefault(); setDragging(false); const f = e.dataTransfer.files[0]; if (f) onFile(f) }}
-        onClick={() => { const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.srt,.ass,.vtt'; inp.onchange = e => { if (e.target.files[0]) onFile(e.target.files[0]) }; inp.click() }}
-      >
-        <div style={{ fontSize: 28, marginBottom: 6 }}>⬆</div>
-        <div style={{ fontWeight: 500 }}>{label || 'Drop your SRT file here'}</div>
-        <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>or click to browse · .srt .ass .vtt</div>
-      </div>
-    )
-  }
-
-  const SubPanel = ({ blocks, label, translating, translateSource, error, onBlockChange }) => {
-    const [elapsed, setElapsed] = React.useState(0)
-    React.useEffect(() => {
-      if (!translating) { setElapsed(0); return }
-      const t = setInterval(() => setElapsed(s => s + 1), 1000)
-      return () => clearInterval(t)
-    }, [translating])
-
-    const fmt = s => s < 60 ? `${s}s` : `${Math.floor(s/60)}m ${s%60}s`
-
-    if (translating) return (
-      <div className="upload-sub-panel">
-        <div className="panel-empty" style={{ padding: '1.5rem' }}>
-          <div className="spinner" style={{ width: 24, height: 24, borderWidth: 3 }} />
-          <div style={{ fontWeight: 500, marginTop: 8 }}>AI is processing magic...brb</div>
-          <div style={{ fontSize: 12, color: 'var(--accent)', marginTop: 6, fontFamily: 'monospace' }}>⏱ {fmt(elapsed)}</div>
-          <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>Large files may take 3–8 mins</div>
-        </div>
-      </div>
-    )
-    if (!blocks.length) return null
-    return (
-      <div className="upload-sub-panel">
-        <div className="upload-sub-header">
-          <div>
-            <span style={{ fontWeight: 500 }}>{label}</span>
-            <span style={{ fontSize: 12, color: 'var(--muted)', marginLeft: 8 }}>{blocks.length} lines</span>
-            {translateSource && <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>{translateSource}</div>}
-          </div>
-        </div>
-        {error && <div className="status-bar error" style={{ margin: '0 16px 12px' }}>{error}</div>}
-        <div className="panel-body sub-panel-scroll">
-          {blocks.map((b, i) => (
-            <div key={i} className="sub-line">
-              <div className="sub-time">{b.start?.slice(0, 8)}</div>
-              <textarea
-                className="sub-text"
-                value={b.text}
-                onChange={e => onBlockChange && onBlockChange(i, e.target.value)}
-                rows={b.text.split('\n').length}
-              />
-            </div>
-          ))}
-        </div>
-      </div>
-    )
-  }
 
   return (
     <div className="upload-wrap">
@@ -668,10 +668,10 @@ export default function Home() {
     downloadFile(srt, `${base}_merged_${langCode}.srt`)
   }
 
-  const updateUploadBlock = (idx, val) => { const u = [...uploadedBlocks]; u[idx] = { ...u[idx], text: val }; setUploadedBlocks(u) }
-  const updateUploadTranslatedBlock = (idx, val) => { const u = [...uploadTranslatedBlocks]; u[idx] = { ...u[idx], text: val }; setUploadTranslatedBlocks(u) }
-  const updateUploadBlock2 = (idx, val) => { const u = [...uploadedBlocks2]; u[idx] = { ...u[idx], text: val }; setUploadedBlocks2(u) }
-  const updateUploadTranslatedBlock2 = (idx, val) => { const u = [...uploadTranslatedBlocks2]; u[idx] = { ...u[idx], text: val }; setUploadTranslatedBlocks2(u) }
+  const updateUploadBlock = useCallback((idx, val) => { setUploadedBlocks(u => { const a = [...u]; a[idx] = { ...a[idx], text: val }; return a }) }, [])
+  const updateUploadTranslatedBlock = useCallback((idx, val) => { setUploadTranslatedBlocks(u => { const a = [...u]; a[idx] = { ...a[idx], text: val }; return a }) }, [])
+  const updateUploadBlock2 = useCallback((idx, val) => { setUploadedBlocks2(u => { const a = [...u]; a[idx] = { ...a[idx], text: val }; return a }) }, [])
+  const updateUploadTranslatedBlock2 = useCallback((idx, val) => { setUploadTranslatedBlocks2(u => { const a = [...u]; a[idx] = { ...a[idx], text: val }; return a }) }, [])
 
   const handleDownloadSingle = () => {
     if (!blocksL1.length) return
