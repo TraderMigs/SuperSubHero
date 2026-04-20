@@ -98,7 +98,7 @@ function SrtDropZone({ onFile, fileName, blocks, onReset: resetFn, label }) {
   )
 }
 
-function SubPanel({ blocks, label, translating, translateSource, error, onBlockChange }) {
+function SubPanel({ blocks, label, translating, translateSource, error, onBlockChange, progress }) {
   const [elapsed, setElapsed] = React.useState(0)
   React.useEffect(() => {
     if (!translating) { setElapsed(0); return }
@@ -114,6 +114,7 @@ function SubPanel({ blocks, label, translating, translateSource, error, onBlockC
         <div className="spinner" style={{ width: 24, height: 24, borderWidth: 3 }} />
         <div style={{ fontWeight: 500, marginTop: 8 }}>AI is processing magic...brb</div>
         <div style={{ fontSize: 12, color: 'var(--accent)', marginTop: 6, fontFamily: 'monospace' }}>⏱ {fmt(elapsed)}</div>
+        {progress && <div style={{ fontSize: 12, color: 'var(--accent2)', marginTop: 4 }}>{progress}</div>}
         <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>Large files may take 3–8 mins</div>
       </div>
     </div>
@@ -155,6 +156,7 @@ function UploadTranslateSection({
   uploadOffsetMs, setUploadOffsetMs,
   uploadOffsetMs2, setUploadOffsetMs2,
   uploadTranslateSource, uploadTranslateSource2,
+  uploadProgress, uploadProgress2,
   onUpload, onUpload2, onTranslate, onTranslate2,
   onDownloadOriginal, onDownloadTranslated, onDownloadMerged,
   onDownloadOriginal2, onDownloadTranslated2, onDownloadMerged2,
@@ -209,6 +211,7 @@ function UploadTranslateSection({
                 translateSource={uploadTranslateSource}
                 error={uploadError}
                 onBlockChange={onUpdateTranslated}
+                progress={uploadProgress}
               />
 
               <div className="ctrl-label" style={{ marginTop: 16 }}>Sync Adjustment</div>
@@ -277,6 +280,7 @@ function UploadTranslateSection({
                 translateSource={uploadTranslateSource2}
                 error={uploadError2}
                 onBlockChange={onUpdateTranslated2}
+                progress={uploadProgress2}
               />
 
               <div className="ctrl-label" style={{ marginTop: 16 }}>Sync Adjustment</div>
@@ -358,6 +362,8 @@ export default function Home() {
   const [uploadError2, setUploadError2] = useState('')
   const [uploadOffsetMs, setUploadOffsetMs] = useState(0)
   const [uploadOffsetMs2, setUploadOffsetMs2] = useState(0)
+  const [uploadProgress, setUploadProgress] = useState('')
+  const [uploadProgress2, setUploadProgress2] = useState('')
   const [uploadTranslateSource, setUploadTranslateSource] = useState('')
   const [uploadTranslateSource2, setUploadTranslateSource2] = useState('')
 
@@ -627,27 +633,41 @@ export default function Home() {
     reader.readAsText(file)
   }
 
-  const handleUploadTranslate = async (blocks, targetLangCode, setTranslating, setTranslatedBlocks, setError, setTranslateSource) => {
+  const handleUploadTranslate = async (blocks, targetLangCode, setTranslating, setTranslatedBlocks, setError, setTranslateSource, setProgress) => {
     if (!blocks.length) return
     setTranslating(true)
     setError('')
     setTranslatedBlocks([])
+    if (setProgress) setProgress('')
+    const CHUNK_SIZE = 80
     try {
-      const srtContent = buildSrt(blocks)
       const targetLang = LANGUAGES.find(l => l.code === targetLangCode)?.label || targetLangCode
-      const resp = await fetch('/api/translate-srt', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ srtContent, targetLanguage: targetLang, targetLanguageCode: targetLangCode }),
-      })
-      const data = await resp.json()
-      if (data.error) throw new Error(data.error)
-      const parsed = parseSrt(data.content)
-      if (!parsed.length) throw new Error('Translation produced empty result')
-      setTranslatedBlocks(parsed)
+      // Split blocks into chunks
+      const chunks = []
+      for (let i = 0; i < blocks.length; i += CHUNK_SIZE) {
+        chunks.push(blocks.slice(i, i + CHUNK_SIZE))
+      }
+      const allTranslated = []
+      for (let ci = 0; ci < chunks.length; ci++) {
+        if (setProgress) setProgress(`Translating chunk ${ci + 1} of ${chunks.length}...`)
+        const chunkSrt = buildSrt(chunks[ci])
+        const resp = await fetch('/api/translate-srt', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ srtContent: chunkSrt, targetLanguage: targetLang, targetLanguageCode: targetLangCode }),
+        })
+        const data = await resp.json()
+        if (data.error) throw new Error(data.error)
+        const parsed = parseSrt(data.content)
+        allTranslated.push(...parsed)
+      }
+      if (!allTranslated.length) throw new Error('Translation produced empty result')
+      setTranslatedBlocks(allTranslated)
       setTranslateSource(`Translated to: ${targetLang} via AI`)
+      if (setProgress) setProgress('')
     } catch (err) {
       setError(err.message)
+      if (setProgress) setProgress('')
     } finally {
       setTranslating(false)
     }
@@ -728,10 +748,12 @@ export default function Home() {
           setUploadOffsetMs2={setUploadOffsetMs2}
           uploadTranslateSource={uploadTranslateSource}
           uploadTranslateSource2={uploadTranslateSource2}
+          uploadProgress={uploadProgress}
+          uploadProgress2={uploadProgress2}
           onUpload={(file) => handleUploadSrt(file, setUploadedBlocks, setUploadFileName)}
           onUpload2={(file) => handleUploadSrt(file, setUploadedBlocks2, setUploadFileName2)}
-          onTranslate={() => handleUploadTranslate(uploadedBlocks, uploadTargetLang, setUploadTranslating, setUploadTranslatedBlocks, setUploadError, setUploadTranslateSource)}
-          onTranslate2={() => handleUploadTranslate(uploadedBlocks2, uploadTargetLang2, setUploadTranslating2, setUploadTranslatedBlocks2, setUploadError2, setUploadTranslateSource2)}
+          onTranslate={() => handleUploadTranslate(uploadedBlocks, uploadTargetLang, setUploadTranslating, setUploadTranslatedBlocks, setUploadError, setUploadTranslateSource, setUploadProgress)}
+          onTranslate2={() => handleUploadTranslate(uploadedBlocks2, uploadTargetLang2, setUploadTranslating2, setUploadTranslatedBlocks2, setUploadError2, setUploadTranslateSource2, setUploadProgress2)}
           onDownloadOriginal={() => handleUploadDownloadSingle(uploadedBlocks, 'original', uploadFileName)}
           onDownloadTranslated={() => handleUploadDownloadSingle(uploadTranslatedBlocks, uploadTargetLang, uploadFileName, uploadOffsetMs)}
           onDownloadMerged={() => handleUploadDownloadMerged(uploadedBlocks, uploadTranslatedBlocks, uploadTargetLang, uploadFileName, uploadOffsetMs)}
