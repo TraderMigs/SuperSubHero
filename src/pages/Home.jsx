@@ -543,17 +543,31 @@ export default function Home() {
       }
 
       const targetLang = LANGUAGES.find(l => l.code === targetLangCode)?.label || targetLangCode
-      const translateResp = await fetch('/api/translate-srt', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ srtContent: englishContent, targetLanguage: targetLang, targetLanguageCode: targetLangCode }),
-      })
-      const translateData = await translateResp.json()
-      if (translateData.error) throw new Error(translateData.error)
+      const CHUNK_SIZE = 80
+      const allBlocks = parseSrt(englishContent)
+      if (!allBlocks.length) throw new Error('Could not parse English subtitle')
 
-      const parsed = parseSrt(translateData.content)
-      if (!parsed.length) throw new Error('Translation produced empty result')
-      setBlocks(parsed)
+      const chunks = []
+      for (let i = 0; i < allBlocks.length; i += CHUNK_SIZE) {
+        chunks.push(allBlocks.slice(i, i + CHUNK_SIZE))
+      }
+
+      const allTranslated = []
+      for (const chunk of chunks) {
+        const chunkSrt = buildSrt(chunk)
+        const translateResp = await fetch('/api/translate-srt', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ srtContent: chunkSrt, targetLanguage: targetLang, targetLanguageCode: targetLangCode }),
+        })
+        const translateData = await translateResp.json()
+        if (translateData.error) throw new Error(translateData.error)
+        const parsed = parseSrt(translateData.content)
+        allTranslated.push(...parsed)
+      }
+
+      if (!allTranslated.length) throw new Error('Translation produced empty result')
+      setBlocks(allTranslated)
     } catch (err) {
       setError(err.message)
     } finally {
