@@ -4,7 +4,7 @@ export default async function handler(req, res) {
   const { srtContent, targetLanguage, targetLanguageCode } = req.body
   if (!srtContent || !targetLanguage) return res.status(400).json({ error: 'srtContent and targetLanguage required' })
 
-  const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY
+  const OPENAI_API_KEY = process.env.OPENAI_API_KEY
   const DELIMITER = '|||'
 
   try {
@@ -41,28 +41,30 @@ SELF-CHECK before returning:
 - Scan every line — if ANY line is still in English or the source language, translate it now.
 - Only return the final fully-translated result.`
 
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
-        'x-api-key': ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
+        'Authorization': `Bearer ${OPENAI_API_KEY}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'claude-haiku-4-5-20251001',
+        model: 'gpt-4o-mini',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: batch }
+        ],
+        temperature: 0.1,
         max_tokens: 8000,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: batch }],
       }),
     })
 
     if (!response.ok) {
       const err = await response.text()
-      throw new Error(`Anthropic error: ${err}`)
+      throw new Error(`OpenAI error: ${err}`)
     }
 
     const data = await response.json()
-    const translated = data.content[0].text
+    const translated = data.choices[0].message.content
       .split(DELIMITER)
       .map(t => t.trim())
       .filter(t => t.length > 0)
