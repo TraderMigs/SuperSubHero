@@ -216,7 +216,7 @@ function UploadTranslateSection({
 
               <div className="ctrl-label" style={{ marginTop: 16 }}>Sync Adjustment</div>
               <div className="sync-wrap">
-                <input type="range" min="-30000" max="30000" step="100" value={uploadOffsetMs}
+                <input type="range" min="-300000" max="300000" step="100" value={uploadOffsetMs}
                   onChange={e => setUploadOffsetMs(Number(e.target.value))} className="sync-slider" />
                 <div className="sync-display">
                   <button className="sync-reset" onClick={() => setUploadOffsetMs(0)}>↺</button>
@@ -285,7 +285,7 @@ function UploadTranslateSection({
 
               <div className="ctrl-label" style={{ marginTop: 16 }}>Sync Adjustment</div>
               <div className="sync-wrap">
-                <input type="range" min="-30000" max="30000" step="100" value={uploadOffsetMs2}
+                <input type="range" min="-300000" max="300000" step="100" value={uploadOffsetMs2}
                   onChange={e => setUploadOffsetMs2(Number(e.target.value))} className="sync-slider" />
                 <div className="sync-display">
                   <button className="sync-reset" onClick={() => setUploadOffsetMs2(0)}>↺</button>
@@ -1009,8 +1009,8 @@ export default function Home() {
             <div className="sync-wrap">
               <input
                 type="range"
-                min="-10000"
-                max="10000"
+                min="-300000"
+                max="300000"
                 step="100"
                 value={offsetMs}
                 onChange={e => setOffsetMs(Number(e.target.value))}
