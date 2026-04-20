@@ -19,18 +19,14 @@ export function buildSrt(blocks) {
 
 // Merge two parsed SRT arrays into dual-language SRT
 export function mergeSrts(blocks1, blocks2) {
-  // Map lang2 by start time for fast lookup
-  const lang2Map = {}
-  blocks2.forEach(b => { lang2Map[b.start] = b.text })
-
-  const merged = blocks1.map(b => {
-    const lang2Text = lang2Map[b.start]
+  // Match by position index — timestamp matching is unreliable after chunked translation
+  return blocks1.map((b, i) => {
+    const lang2Text = blocks2[i]?.text
     return {
       ...b,
       text: lang2Text ? `${b.text}\n${lang2Text}` : b.text
     }
   })
-  return merged
 }
 
 // Download a string as a file
