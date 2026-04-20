@@ -5,7 +5,8 @@ export function parseSrt(srtString) {
     const lines = block.split('\n')
     const indexLine = lines[0]?.trim()
     const timeLine = lines[1]?.trim() || ''
-    const text = lines.slice(2).join('\n').trim()
+    const rawText = lines.slice(2).join('\n').trim()
+    const text = rawText.replace(/<[^>]+>/g, '')
     const [start, end] = timeLine.includes('-->') ? timeLine.split(' --> ') : ['', '']
     return { index: parseInt(indexLine) || 0, start: start?.trim(), end: end?.trim(), text }
   }).filter(b => b.start && b.end && b.text)
