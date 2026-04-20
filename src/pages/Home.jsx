@@ -316,6 +316,7 @@ function UploadTranslateSection({
 
 export default function Home() {
   const [query, setQuery] = useState('')
+  const [year, setYear] = useState('')
   const [contentType, setContentType] = useState('movie')
   const [season, setSeason] = useState('')
   const [episode, setEpisode] = useState('')
@@ -397,6 +398,7 @@ export default function Home() {
 
     try {
       const params = new URLSearchParams({ query: query.trim(), type: contentType })
+      if (year.trim()) params.append('year', year.trim())
       if (contentType === 'tv' && season) params.append('season', season)
       if (contentType === 'tv' && episode) params.append('episode', episode)
       const resp = await fetch(`/api/search?${params}`)
@@ -811,6 +813,10 @@ export default function Home() {
           </button>
         </div>
 
+        <div className="season-ep-row" style={{ marginTop: 8 }}>
+          <input type="number" min="1900" max="2100" placeholder="Year (optional)" value={year} onChange={e => setYear(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSearch()} style={{ flex: 1 }} />
+        </div>
+
         {contentType === 'tv' && (
           <div className="season-ep-row">
             <input type="number" min="1" placeholder="Season" value={season} onChange={e => setSeason(e.target.value)} />
@@ -899,7 +905,7 @@ export default function Home() {
                   .slice(0, 8)
                   .map((s, i) => (
                   <div key={i} className={`sub-result-item ${selectedSubL1?.id === s.id ? 'selected' : ''}`} onClick={() => { setSelectedSubL1(s); loadSubContent(s, setLoadingL1, setBlocksL1, setErrorL1, subResultsL1) }}>
-                    <div className="sub-result-name">{s.name}</div>
+                    <div className="sub-result-name" style={{ whiteSpace: "normal", wordBreak: "break-word" }}>{s.name}</div>
                     <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 2 }}>
                       {s.episode > 0 && <div className="sub-result-meta">E{s.episode}</div>}
                       {(s.full_season) && <div className="sub-result-meta" style={{ color: 'var(--muted)' }}>Full</div>}
@@ -943,7 +949,7 @@ export default function Home() {
                       .slice(0, 8)
                       .map((s, i) => (
                       <div key={i} className={`sub-result-item ${selectedSubL2?.id === s.id ? 'selected' : ''}`} onClick={() => { setSelectedSubL2(s); loadSubContent(s, setLoadingL2, setBlocksL2, setErrorL2, subResultsL2) }}>
-                        <div className="sub-result-name">{s.name}</div>
+                        <div className="sub-result-name" style={{ whiteSpace: "normal", wordBreak: "break-word" }}>{s.name}</div>
                         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 2 }}>
                           {s.episode > 0 && <div className="sub-result-meta">E{s.episode}</div>}
                           {(s.full_season) && <div className="sub-result-meta" style={{ color: 'var(--muted)' }}>Full</div>}
