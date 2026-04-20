@@ -316,7 +316,6 @@ function UploadTranslateSection({
 
 export default function Home() {
   const [query, setQuery] = useState('')
-  const [year, setYear] = useState('')
   const [contentType, setContentType] = useState('movie')
   const [season, setSeason] = useState('')
   const [episode, setEpisode] = useState('')
@@ -344,8 +343,6 @@ export default function Home() {
 
   const [translatingL1, setTranslatingL1] = useState(false)
   const [translatingL2, setTranslatingL2] = useState(false)
-  const [autoTranslatingL1, setAutoTranslatingL1] = useState(false)
-  const [autoTranslatingL2, setAutoTranslatingL2] = useState(false)
   const [translateSourceL1, setTranslateSourceL1] = useState('')
   const [translateSourceL2, setTranslateSourceL2] = useState('')
 
@@ -400,7 +397,6 @@ export default function Home() {
 
     try {
       const params = new URLSearchParams({ query: query.trim(), type: contentType })
-      if (year.trim()) params.append('year', year.trim())
       if (contentType === 'tv' && season) params.append('season', season)
       if (contentType === 'tv' && episode) params.append('episode', episode)
       const resp = await fetch(`/api/search?${params}`)
@@ -494,77 +490,69 @@ export default function Home() {
       setLoading(false)
     }
   }
-  const translateFallback = async (targetLangCode, setBlocks, setError, setTranslating, setTranslateSource, sourceBlocks = null) => {
+  const translateFallback = async (targetLangCode, setBlocks, setError, setTranslating, setTranslateSource) => {
     setTranslating(true)
     setError('')
     setBlocks([])
     try {
-      const targetLang = LANGUAGES.find(l => l.code === targetLangCode)?.label || targetLangCode
-      const CHUNK_SIZE = 80
-      let allBlocks = []
+      const params = new URLSearchParams({ language: 'EN', type: contentType })
+      if (selectedTitle.sd_id) params.append('sd_id', selectedTitle.sd_id)
+      else if (selectedTitle.imdb_id) params.append('imdb_id', selectedTitle.imdb_id)
+      else if (selectedTitle.tmdb_id) params.append('tmdb_id', selectedTitle.tmdb_id)
+      if (selectedTitle.title) params.append('title', selectedTitle.title)
+      if (contentType === 'tv' && season) params.append('season', season)
+      if (contentType === 'tv' && episode) params.append('episode', episode)
 
-      // Smart source selection: use other window's blocks if available, otherwise fetch English
-      if (sourceBlocks && sourceBlocks.length > 0) {
-        allBlocks = sourceBlocks
-        if (setTranslateSource) setTranslateSource(`Translated from: other panel`)
-      } else {
-        const params = new URLSearchParams({ language: 'EN', type: contentType })
-        if (selectedTitle.sd_id) params.append('sd_id', selectedTitle.sd_id)
-        else if (selectedTitle.imdb_id) params.append('imdb_id', selectedTitle.imdb_id)
-        else if (selectedTitle.tmdb_id) params.append('tmdb_id', selectedTitle.tmdb_id)
-        if (selectedTitle.title) params.append('title', selectedTitle.title)
-        if (contentType === 'tv' && season) params.append('season', season)
-        if (contentType === 'tv' && episode) params.append('episode', episode)
+      const listResp = await fetch(`/api/subtitles?${params}`)
+      const listData = await listResp.json()
+      if (!listData.subtitles?.length) throw new Error('No English subtitles found to translate from')
 
-        const listResp = await fetch(`/api/subtitles?${params}`)
-        const listData = await listResp.json()
-        if (!listData.subtitles?.length) throw new Error('No English subtitles found to translate from')
+      let englishContent = ''
+      let lastDownloadError = 'Could not download English subtitles'
 
-        let englishContent = ''
-        let lastDownloadError = 'Could not download English subtitles'
+      // Sort: try OS and SubSource first (SubDL CDN is blocked from Vercel)
+      const sortedCandidates = [
+        ...listData.subtitles.filter(c => c.source !== 'subdl'),
+        ...listData.subtitles.filter(c => c.source === 'subdl'),
+      ]
 
-        const sortedCandidates = [
-          ...listData.subtitles.filter(c => c.source !== 'subdl'),
-          ...listData.subtitles.filter(c => c.source === 'subdl'),
-        ]
-
-        let usedCandidate = null
-        for (const candidate of sortedCandidates) {
-          const fetchResp = await fetch('/api/fetch-sub', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              url: candidate.url || null,
-              file_id: candidate.file_id || null,
-              ss_id: candidate.ss_id || null,
-            }),
-          })
-          const fetchData = await fetchResp.json()
-          if (fetchData.success && fetchData.content) {
-            englishContent = fetchData.content
-            usedCandidate = candidate
-            break
-          }
-          lastDownloadError = fetchData.error || lastDownloadError
+      let usedCandidate = null
+      for (const candidate of sortedCandidates) {
+        const fetchResp = await fetch('/api/fetch-sub', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            url: candidate.url || null,
+            file_id: candidate.file_id || null,
+            ss_id: candidate.ss_id || null,
+          }),
+        })
+        const fetchData = await fetchResp.json()
+        if (fetchData.success && fetchData.content) {
+          englishContent = fetchData.content
+          usedCandidate = candidate
+          break
         }
-
-        if (!englishContent) throw new Error(lastDownloadError)
-        if (setTranslateSource && usedCandidate) {
-          const epLabel = usedCandidate.episode > 0 ? ` · E${usedCandidate.episode}` : ''
-          setTranslateSource(`Translated from: English${epLabel} (${usedCandidate.source})`)
-        }
-        allBlocks = parseSrt(englishContent)
+        lastDownloadError = fetchData.error || lastDownloadError
       }
 
-      if (!allBlocks.length) throw new Error('Could not parse source subtitle')
+      if (!englishContent) throw new Error(lastDownloadError)
+      if (setTranslateSource && usedCandidate) {
+        const epLabel = usedCandidate.episode > 0 ? ` · E${usedCandidate.episode}` : ''
+        setTranslateSource(`Translated from: English${epLabel} (${usedCandidate.source})`)
+      }
+
+      const targetLang = LANGUAGES.find(l => l.code === targetLangCode)?.label || targetLangCode
+      const CHUNK_SIZE = 80
+      const allBlocks = parseSrt(englishContent)
+      if (!allBlocks.length) throw new Error('Could not parse English subtitle')
 
       const chunks = []
       for (let i = 0; i < allBlocks.length; i += CHUNK_SIZE) {
         chunks.push(allBlocks.slice(i, i + CHUNK_SIZE))
       }
 
-      const allTranslated = []
-      for (const chunk of chunks) {
+      const chunkResults = await Promise.all(chunks.map(async (chunk) => {
         const chunkSrt = buildSrt(chunk)
         const translateResp = await fetch('/api/translate-srt', {
           method: 'POST',
@@ -574,14 +562,13 @@ export default function Home() {
         const translateData = await translateResp.json()
         if (translateData.error) throw new Error(translateData.error)
         const parsed = parseSrt(translateData.content)
-        // Marry translated text back onto original timestamps from this chunk
-        const withOriginalTimestamps = chunk.map((orig, i) => ({
+        return chunk.map((orig, i) => ({
           ...orig,
           text: parsed[i]?.text || orig.text
         }))
-        allTranslated.push(...withOriginalTimestamps)
-      }
+      }))
 
+      const allTranslated = chunkResults.flat()
       if (!allTranslated.length) throw new Error('Translation produced empty result')
       setBlocks(allTranslated)
     } catch (err) {
@@ -677,10 +664,9 @@ export default function Home() {
       for (let i = 0; i < blocks.length; i += CHUNK_SIZE) {
         chunks.push(blocks.slice(i, i + CHUNK_SIZE))
       }
-      const allTranslated = []
-      for (let ci = 0; ci < chunks.length; ci++) {
-        if (setProgress) setProgress(`Translating chunk ${ci + 1} of ${chunks.length}...`)
-        const chunkSrt = buildSrt(chunks[ci])
+      if (setProgress) setProgress(`Translating ${chunks.length} chunks in parallel...`)
+      const chunkResults = await Promise.all(chunks.map(async (chunk) => {
+        const chunkSrt = buildSrt(chunk)
         const resp = await fetch('/api/translate-srt', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -689,13 +675,13 @@ export default function Home() {
         const data = await resp.json()
         if (data.error) throw new Error(data.error)
         const parsed = parseSrt(data.content)
-        // Marry translated text back onto original timestamps from this chunk
-        const withOriginalTimestamps = chunks[ci].map((orig, i) => ({
+        return chunk.map((orig, i) => ({
           ...orig,
           text: parsed[i]?.text || orig.text
         }))
-        allTranslated.push(...withOriginalTimestamps)
-      }
+      }))
+
+      const allTranslated = chunkResults.flat()
       if (!allTranslated.length) throw new Error('Translation produced empty result')
       setTranslatedBlocks(allTranslated)
       setTranslateSource(`Translated to: ${targetLang} via AI`)
@@ -742,23 +728,6 @@ export default function Home() {
     const title = selectedTitle?.title?.replace(/[^a-z0-9]/gi, '_') || 'subtitles'
     downloadFile(srt, `${title}_${lang1}_${lang2}_merged.srt`)
   }
-
-  // Auto-trigger translation when the other window already has content
-  useEffect(() => {
-    if (errorL2 === 'not_found' && !blocksL2.length && !translatingL2 && !autoTranslatingL2 && blocksL1.length > 0 && lang2) {
-      setAutoTranslatingL2(true)
-      translateFallback(lang2, setBlocksL2, setErrorL2, setTranslatingL2, setTranslateSourceL2, blocksL1)
-        .finally(() => setAutoTranslatingL2(false))
-    }
-  }, [errorL2, blocksL1.length, lang2])
-
-  useEffect(() => {
-    if (errorL1 === 'not_found' && !blocksL1.length && !translatingL1 && !autoTranslatingL1 && blocksL2.length > 0) {
-      setAutoTranslatingL1(true)
-      translateFallback(lang1, setBlocksL1, setErrorL1, setTranslatingL1, setTranslateSourceL1, blocksL2)
-        .finally(() => setAutoTranslatingL1(false))
-    }
-  }, [errorL1, blocksL2.length])
 
   const lang1Label = LANGUAGES.find(l => l.code === lang1)?.label || lang1
   const lang2Label = lang2 ? (LANGUAGES.find(l => l.code === lang2)?.label || lang2) : null
@@ -849,10 +818,6 @@ export default function Home() {
           </button>
         </div>
 
-        <div className="season-ep-row" style={{ marginTop: 8 }}>
-          <input type="number" min="1900" max="2100" placeholder="Year (optional)" value={year} onChange={e => setYear(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSearch()} style={{ flex: 1 }} />
-        </div>
-
         {contentType === 'tv' && (
           <div className="season-ep-row">
             <input type="number" min="1" placeholder="Season" value={season} onChange={e => setSeason(e.target.value)} />
@@ -922,11 +887,11 @@ export default function Home() {
               {fetchingL1 ? 'Searching...' : `Find ${lang1Label} Subtitles`}
             </button>
 
-            {errorL1 === 'not_found' && !blocksL1.length && !translatingL1 && !autoTranslatingL1 && (
+            {errorL1 === 'not_found' && !blocksL1.length && !translatingL1 && (
               <div className="ai-fallback-box">
                 <div className="ai-fallback-text">No {lang1Label} subtitles found.</div>
-                <button className="fetch-btn ai-btn" onClick={() => translateFallback(lang1, setBlocksL1, setErrorL1, setTranslatingL1, setTranslateSourceL1, blocksL2.length > 0 ? blocksL2 : null)}>
-                  ✨ AI Translate
+                <button className="fetch-btn ai-btn" onClick={() => translateFallback(lang1, setBlocksL1, setErrorL1, setTranslatingL1, setTranslateSourceL1)}>
+                  ✨ AI Translate from English
                 </button>
               </div>
             )}
@@ -941,7 +906,7 @@ export default function Home() {
                   .slice(0, 8)
                   .map((s, i) => (
                   <div key={i} className={`sub-result-item ${selectedSubL1?.id === s.id ? 'selected' : ''}`} onClick={() => { setSelectedSubL1(s); loadSubContent(s, setLoadingL1, setBlocksL1, setErrorL1, subResultsL1) }}>
-                    <div className="sub-result-name" title={s.name} style={{ whiteSpace: "normal", wordBreak: "break-word" }}>{s.name}</div>
+                    <div className="sub-result-name">{s.name}</div>
                     <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 2 }}>
                       {s.episode > 0 && <div className="sub-result-meta">E{s.episode}</div>}
                       {(s.full_season) && <div className="sub-result-meta" style={{ color: 'var(--muted)' }}>Full</div>}
@@ -966,11 +931,11 @@ export default function Home() {
                   {fetchingL2 ? 'Searching...' : `Find ${lang2Label} Subtitles`}
                 </button>
 
-                {errorL2 === 'not_found' && !blocksL2.length && !translatingL2 && !autoTranslatingL2 && (
+                {errorL2 === 'not_found' && !blocksL2.length && !translatingL2 && (
                   <div className="ai-fallback-box">
                     <div className="ai-fallback-text">No {lang2Label} subtitles found.</div>
-                    <button className="fetch-btn ai-btn" onClick={() => translateFallback(lang2, setBlocksL2, setErrorL2, setTranslatingL2, setTranslateSourceL2, blocksL1.length > 0 ? blocksL1 : null)}>
-                      ✨ AI Translate
+                    <button className="fetch-btn ai-btn" onClick={() => translateFallback(lang2, setBlocksL2, setErrorL2, setTranslatingL2, setTranslateSourceL2)}>
+                      ✨ AI Translate from English
                     </button>
                   </div>
                 )}
@@ -985,7 +950,7 @@ export default function Home() {
                       .slice(0, 8)
                       .map((s, i) => (
                       <div key={i} className={`sub-result-item ${selectedSubL2?.id === s.id ? 'selected' : ''}`} onClick={() => { setSelectedSubL2(s); loadSubContent(s, setLoadingL2, setBlocksL2, setErrorL2, subResultsL2) }}>
-                        <div className="sub-result-name" title={s.name} style={{ whiteSpace: "normal", wordBreak: "break-word" }}>{s.name}</div>
+                        <div className="sub-result-name">{s.name}</div>
                         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 2 }}>
                           {s.episode > 0 && <div className="sub-result-meta">E{s.episode}</div>}
                           {(s.full_season) && <div className="sub-result-meta" style={{ color: 'var(--muted)' }}>Full</div>}
