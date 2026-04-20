@@ -54,7 +54,7 @@ SELF-CHECK before returning:
           { role: 'user', content: batch }
         ],
         temperature: 0.1,
-        max_tokens: 8000,
+        max_tokens: 16000,
       }),
     })
 
