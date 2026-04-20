@@ -344,6 +344,8 @@ export default function Home() {
 
   const [translatingL1, setTranslatingL1] = useState(false)
   const [translatingL2, setTranslatingL2] = useState(false)
+  const [autoTranslatingL1, setAutoTranslatingL1] = useState(false)
+  const [autoTranslatingL2, setAutoTranslatingL2] = useState(false)
   const [translateSourceL1, setTranslateSourceL1] = useState('')
   const [translateSourceL2, setTranslateSourceL2] = useState('')
 
@@ -741,6 +743,23 @@ export default function Home() {
     downloadFile(srt, `${title}_${lang1}_${lang2}_merged.srt`)
   }
 
+  // Auto-trigger translation when the other window already has content
+  useEffect(() => {
+    if (errorL2 === 'not_found' && !blocksL2.length && !translatingL2 && !autoTranslatingL2 && blocksL1.length > 0 && lang2) {
+      setAutoTranslatingL2(true)
+      translateFallback(lang2, setBlocksL2, setErrorL2, setTranslatingL2, setTranslateSourceL2, blocksL1)
+        .finally(() => setAutoTranslatingL2(false))
+    }
+  }, [errorL2, blocksL1.length, lang2])
+
+  useEffect(() => {
+    if (errorL1 === 'not_found' && !blocksL1.length && !translatingL1 && !autoTranslatingL1 && blocksL2.length > 0) {
+      setAutoTranslatingL1(true)
+      translateFallback(lang1, setBlocksL1, setErrorL1, setTranslatingL1, setTranslateSourceL1, blocksL2)
+        .finally(() => setAutoTranslatingL1(false))
+    }
+  }, [errorL1, blocksL2.length])
+
   const lang1Label = LANGUAGES.find(l => l.code === lang1)?.label || lang1
   const lang2Label = lang2 ? (LANGUAGES.find(l => l.code === lang2)?.label || lang2) : null
   const hasDual = lang2 && blocksL2.length > 0
@@ -903,7 +922,7 @@ export default function Home() {
               {fetchingL1 ? 'Searching...' : `Find ${lang1Label} Subtitles`}
             </button>
 
-            {errorL1 === 'not_found' && !blocksL1.length && !translatingL1 && (
+            {errorL1 === 'not_found' && !blocksL1.length && !translatingL1 && !autoTranslatingL1 && (
               <div className="ai-fallback-box">
                 <div className="ai-fallback-text">No {lang1Label} subtitles found.</div>
                 <button className="fetch-btn ai-btn" onClick={() => translateFallback(lang1, setBlocksL1, setErrorL1, setTranslatingL1, setTranslateSourceL1, blocksL2.length > 0 ? blocksL2 : null)}>
@@ -947,7 +966,7 @@ export default function Home() {
                   {fetchingL2 ? 'Searching...' : `Find ${lang2Label} Subtitles`}
                 </button>
 
-                {errorL2 === 'not_found' && !blocksL2.length && !translatingL2 && (
+                {errorL2 === 'not_found' && !blocksL2.length && !translatingL2 && !autoTranslatingL2 && (
                   <div className="ai-fallback-box">
                     <div className="ai-fallback-text">No {lang2Label} subtitles found.</div>
                     <button className="fetch-btn ai-btn" onClick={() => translateFallback(lang2, setBlocksL2, setErrorL2, setTranslatingL2, setTranslateSourceL2, blocksL1.length > 0 ? blocksL1 : null)}>
