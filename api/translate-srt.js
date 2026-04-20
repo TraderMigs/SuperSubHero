@@ -4,8 +4,7 @@ export default async function handler(req, res) {
   const { srtContent, targetLanguage, targetLanguageCode } = req.body
   if (!srtContent || !targetLanguage) return res.status(400).json({ error: 'srtContent and targetLanguage required' })
 
-  const OPENAI_API_KEY = process.env.OPENAI_API_KEY
-  const CHUNK_SIZE = 150
+  const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY
   const DELIMITER = '|||'
 
   try {
@@ -24,6 +23,8 @@ export default async function handler(req, res) {
 
     if (!textLines.length) throw new Error('No text found to translate')
 
+    const batch = textLines.map(l => l.text).join('\n' + DELIMITER + '\n')
+
     const systemPrompt = `You are an expert professional subtitle translator specializing in ${targetLanguage}.
 
 STRICT RULES — no exceptions:
@@ -40,61 +41,42 @@ SELF-CHECK before returning:
 - Scan every line — if ANY line is still in English or the source language, translate it now.
 - Only return the final fully-translated result.`
 
-    // Split textLines into chunks of CHUNK_SIZE
-    const chunks = []
-    for (let i = 0; i < textLines.length; i += CHUNK_SIZE) {
-      chunks.push(textLines.slice(i, i + CHUNK_SIZE))
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 8000,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: batch }],
+      }),
+    })
+
+    if (!response.ok) {
+      const err = await response.text()
+      throw new Error(`Anthropic error: ${err}`)
     }
 
-    // Translate each chunk sequentially
-    const allTranslated = []
+    const data = await response.json()
+    const translated = data.content[0].text
+      .split(DELIMITER)
+      .map(t => t.trim())
+      .filter(t => t.length > 0)
 
-    for (const chunk of chunks) {
-      const batch = chunk.map(l => l.text).join(`\n${DELIMITER}\n`)
+    while (translated.length < textLines.length) translated.push('')
 
-      const response = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${OPENAI_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'gpt-4o-mini',
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: batch }
-          ],
-          temperature: 0.1,
-          max_tokens: 8000,
-        }),
-      })
-
-      if (!response.ok) {
-        const err = await response.text()
-        throw new Error(`OpenAI error: ${err}`)
-      }
-
-      const data = await response.json()
-      const chunkTranslated = data.choices[0].message.content
-        .split(DELIMITER)
-        .map(t => t.trim())
-        .filter(t => t.length > 0)
-
-      // Pad if GPT returned fewer lines than sent
-      while (chunkTranslated.length < chunk.length) chunkTranslated.push('')
-      allTranslated.push(...chunkTranslated.slice(0, chunk.length))
-    }
-
-    // Rebuild SRT with translations
     const result = [...lines]
     textLines.forEach((item, i) => {
-      result[item.idx] = allTranslated[i] || ''
+      result[item.idx] = translated[i] || ''
     })
 
     return res.status(200).json({
       content: result.join('\n'),
       linesTranslated: textLines.length,
-      chunksProcessed: chunks.length,
     })
 
   } catch (err) {
