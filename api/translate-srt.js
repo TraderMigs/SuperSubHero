@@ -5,40 +5,40 @@ export default async function handler(req, res) {
   if (!srtContent || !targetLanguage) return res.status(400).json({ error: 'srtContent and targetLanguage required' })
 
   const OPENAI_API_KEY = process.env.OPENAI_API_KEY
-  const DELIMITER = '|||'
+  const BLOCK_DELIMITER = '==='
 
   try {
-    const lines = srtContent.split('\n')
-    const textLines = []
+    // Parse SRT into blocks — preserve multi-line text as single unit
+    const rawBlocks = srtContent.trim().replace(/\r\n/g, '\n').split(/\n\n+/)
+    const blocks = rawBlocks.map(block => {
+      const lines = block.trim().split('\n')
+      const indexLine = lines[0]?.trim()
+      const timeLine = lines[1]?.trim() || ''
+      const text = lines.slice(2).join('\n').trim()
+      return { index: indexLine, time: timeLine, text }
+    }).filter(b => b.time.includes('-->') && b.text)
 
-    lines.forEach((line, idx) => {
-      const trimmed = line.trim()
-      const isIndex = /^\d+$/.test(trimmed)
-      const isTimestamp = /-->/.test(trimmed)
-      const isEmpty = trimmed === ''
-      if (!isIndex && !isTimestamp && !isEmpty) {
-        textLines.push({ idx, text: trimmed })
-      }
-    })
+    if (!blocks.length) throw new Error('No subtitle blocks found')
 
-    if (!textLines.length) throw new Error('No text found to translate')
-
-    const batch = textLines.map(l => l.text).join('\n' + DELIMITER + '\n')
+    // Send one entry per BLOCK — multi-line text joined with \n inside block
+    const batch = blocks.map(b => b.text).join(`\n${BLOCK_DELIMITER}\n`)
 
     const systemPrompt = `You are an expert professional subtitle translator specializing in ${targetLanguage}.
 
 STRICT RULES — no exceptions:
-1. Translate EVERY single line into ${targetLanguage}. Every line. No exceptions.
-2. Lines are separated by the delimiter: ${DELIMITER}
-3. Return ONLY the translated lines separated by ${DELIMITER}. No explanations, no commentary, no preamble, no markdown.
-4. Keep the EXACT same number of lines as the input. Never merge, split, add, or remove lines.
-5. Translate ALL content — dialogue, stage directions [like this], sound cues, speaker labels, everything.
-6. NEVER leave any line in English or any source language. Every single line must be in ${targetLanguage}.
-7. Lines containing only symbols (♪ ♩ ♫ ♬) — keep those symbols exactly as-is.
-8. If a line is a name or untranslatable proper noun, transliterate it into ${targetLanguage} script if applicable, otherwise keep it.
+1. Translate EVERY block into ${targetLanguage}. Every single block. No exceptions.
+2. Blocks are separated by the delimiter: ${BLOCK_DELIMITER}
+3. Return ONLY the translated blocks separated by ${BLOCK_DELIMITER}. No explanations, no commentary, no preamble, no markdown.
+4. Keep the EXACT same number of blocks as the input. Never merge, split, add, or remove blocks.
+5. If a block has multiple lines separated by newlines, preserve the same number of lines in the translation.
+6. Translate ALL content — dialogue, stage directions [like this], sound cues, speaker labels, everything.
+7. NEVER leave any block in English or any source language. Every block must be in ${targetLanguage}.
+8. Blocks containing only symbols (♪ ♩ ♫ ♬) — keep those symbols exactly as-is.
+9. Proper nouns and names — transliterate into ${targetLanguage} script if applicable, otherwise keep as-is.
 
 SELF-CHECK before returning:
-- Scan every line — if ANY line is still in English or the source language, translate it now.
+- Count your output blocks — must equal input block count exactly.
+- If ANY block is still in English, translate it now.
 - Only return the final fully-translated result.`
 
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -64,21 +64,26 @@ SELF-CHECK before returning:
     }
 
     const data = await response.json()
-    const translated = data.choices[0].message.content
-      .split(DELIMITER)
+    const translatedText = data.choices[0].message.content
+
+    // Split back into blocks by delimiter
+    const translatedBlocks = translatedText
+      .split(BLOCK_DELIMITER)
       .map(t => t.trim())
       .filter(t => t.length > 0)
 
-    while (translated.length < textLines.length) translated.push('')
+    // Pad if GPT returned fewer blocks
+    while (translatedBlocks.length < blocks.length) translatedBlocks.push('')
 
-    const result = [...lines]
-    textLines.forEach((item, i) => {
-      result[item.idx] = translated[i] || ''
-    })
+    // Rebuild SRT — one translated block per original block
+    const result = blocks.map((orig, i) => {
+      const translatedText = translatedBlocks[i] || orig.text
+      return `${orig.index}\n${orig.time}\n${translatedText}`
+    }).join('\n\n') + '\n'
 
     return res.status(200).json({
-      content: result.join('\n'),
-      linesTranslated: textLines.length,
+      content: result,
+      blocksTranslated: blocks.length,
     })
 
   } catch (err) {
