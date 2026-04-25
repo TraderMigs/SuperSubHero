@@ -20,26 +20,26 @@ export default async function handler(req, res) {
 
     if (!blocks.length) throw new Error('No subtitle blocks found')
 
-    // Send one entry per BLOCK — multi-line text joined with \n inside block
-    const batch = blocks.map(b => b.text).join(`\n${BLOCK_DELIMITER}\n`)
+    // Number each block explicitly so GPT can reference them
+    const numbered = blocks.map((b, i) => `[${i + 1}] ${b.text}`)
+    const batch = numbered.join(`\n${BLOCK_DELIMITER}\n`)
 
     const systemPrompt = `You are an expert professional subtitle translator specializing in ${targetLanguage}.
 
-STRICT RULES — no exceptions:
-1. Translate EVERY block into ${targetLanguage}. Every single block. No exceptions.
-2. Blocks are separated by the delimiter: ${BLOCK_DELIMITER}
-3. Return ONLY the translated blocks separated by ${BLOCK_DELIMITER}. No explanations, no commentary, no preamble, no markdown.
-4. Keep the EXACT same number of blocks as the input. Never merge, split, add, or remove blocks.
-5. If a block has multiple lines separated by newlines, preserve the same number of lines in the translation.
-6. Translate ALL content — dialogue, stage directions [like this], sound cues, speaker labels, everything.
-7. NEVER leave any block in English or any source language. Every block must be in ${targetLanguage}.
-8. Blocks containing only symbols (♪ ♩ ♫ ♬) — keep those symbols exactly as-is.
-9. Proper nouns and names — transliterate into ${targetLanguage} script if applicable, otherwise keep as-is.
+INPUT FORMAT: Each block starts with [N] where N is the block number, followed by the text to translate.
+OUTPUT FORMAT: Return each translated block starting with [N] separated by ${BLOCK_DELIMITER}
 
-SELF-CHECK before returning:
-- Count your output blocks — must equal input block count exactly.
-- If ANY block is still in English, translate it now.
-- Only return the final fully-translated result.`
+STRICT RULES:
+1. Translate EVERY block. Every single one. No exceptions.
+2. Keep the [N] number prefix on each block exactly as given.
+3. Return EXACTLY ${blocks.length} blocks — same count as input.
+4. Preserve newlines within blocks if the original has them.
+5. Translate ALL content — dialogue, stage directions, sound cues, everything.
+6. NEVER leave any block in English. Every block must be in ${targetLanguage}.
+7. Symbols only (♪ ♩ ♫ ♬) — keep as-is.
+8. Proper nouns/names — transliterate into ${targetLanguage} script if applicable.
+
+SELF-CHECK: Count your output blocks. If count ≠ ${blocks.length}, find the missing ones and add them before returning.`
 
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
@@ -66,24 +66,72 @@ SELF-CHECK before returning:
     const data = await response.json()
     const translatedText = data.choices[0].message.content
 
-    // Split back into blocks by delimiter
-    const translatedBlocks = translatedText
-      .split(BLOCK_DELIMITER)
-      .map(t => t.trim())
-      .filter(t => t.length > 0)
+    // Parse numbered blocks from response
+    const rawTranslated = translatedText.split(BLOCK_DELIMITER).map(t => t.trim()).filter(t => t)
+    
+    // Build a map by block number — handles missing/reordered blocks
+    const translationMap = {}
+    for (const chunk of rawTranslated) {
+      const match = chunk.match(/^\[(\d+)\]\s*([\s\S]*)/)
+      if (match) {
+        const num = parseInt(match[1])
+        const text = match[2].trim()
+        translationMap[num] = text
+      }
+    }
 
-    // Pad if GPT returned fewer blocks
-    while (translatedBlocks.length < blocks.length) translatedBlocks.push('')
+    // Rebuild SRT — use translation map by number, fall back to re-requesting missing ones
+    const missingIndices = []
+    blocks.forEach((_, i) => {
+      if (!translationMap[i + 1]) missingIndices.push(i)
+    })
 
-    // Rebuild SRT — one translated block per original block
+    // If we have missing blocks, do a targeted retry for just those blocks
+    if (missingIndices.length > 0 && missingIndices.length <= 10) {
+      const retryBatch = missingIndices
+        .map(i => `[${i + 1}] ${blocks[i].text}`)
+        .join(`\n${BLOCK_DELIMITER}\n`)
+
+      try {
+        const retryResp = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${OPENAI_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: 'gpt-4o-mini',
+            messages: [
+              { role: 'system', content: `Translate each block into ${targetLanguage}. Keep [N] prefix. Separate blocks with ${BLOCK_DELIMITER}.` },
+              { role: 'user', content: retryBatch }
+            ],
+            temperature: 0.1,
+            max_tokens: 4000,
+          }),
+        })
+        if (retryResp.ok) {
+          const retryData = await retryResp.json()
+          const retryText = retryData.choices[0].message.content
+          for (const chunk of retryText.split(BLOCK_DELIMITER).map(t => t.trim()).filter(t => t)) {
+            const match = chunk.match(/^\[(\d+)\]\s*([\s\S]*)/)
+            if (match) translationMap[parseInt(match[1])] = match[2].trim()
+          }
+        }
+      } catch (e) {
+        console.error('Retry failed:', e)
+      }
+    }
+
+    // Rebuild SRT
     const result = blocks.map((orig, i) => {
-      const translatedText = translatedBlocks[i] || orig.text
-      return `${orig.index}\n${orig.time}\n${translatedText}`
+      const translated = translationMap[i + 1] || orig.text
+      return `${orig.index}\n${orig.time}\n${translated}`
     }).join('\n\n') + '\n'
 
     return res.status(200).json({
       content: result,
       blocksTranslated: blocks.length,
+      missingCount: missingIndices.length,
     })
 
   } catch (err) {
