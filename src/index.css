@@ -1099,3 +1099,88 @@ h1, h2, h3, h4 {
 .sub-panel-scroll::-webkit-scrollbar-thumb:hover {
   background: var(--muted);
 }
+
+/* ── Fullscreen button ── */
+.video-fs-btn {
+  position: absolute;
+  bottom: 58px;
+  right: 12px;
+  background: rgba(0,0,0,0.6);
+  color: #fff;
+  border: 1px solid rgba(255,255,255,0.25);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 13px;
+  cursor: pointer;
+  z-index: 10;
+  pointer-events: all;
+  transition: background 0.15s;
+}
+.video-fs-btn:hover {
+  background: rgba(0,0,0,0.85);
+}
+
+/* ── Fullscreen container layout ── */
+.video-container:fullscreen,
+.video-container:-webkit-full-screen,
+.video-container:-moz-full-screen,
+.video-container:-ms-fullscreen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100vw;
+  height: 100vh;
+  background: #000;
+  border-radius: 0;
+  overflow: hidden;
+}
+
+.video-container:fullscreen .video-el,
+.video-container:-webkit-full-screen .video-el,
+.video-container:-moz-full-screen .video-el,
+.video-container:-ms-fullscreen .video-el {
+  width: 100%;
+  height: 100%;
+  max-height: 100vh;
+  object-fit: contain;
+}
+
+.video-container:fullscreen .video-sub-overlay,
+.video-container:-webkit-full-screen .video-sub-overlay,
+.video-container:-moz-full-screen .video-sub-overlay,
+.video-container:-ms-fullscreen .video-sub-overlay {
+  position: absolute;
+  bottom: 60px;
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  pointer-events: none;
+  padding: 0 24px;
+  z-index: 9999;
+}
+
+.video-container:fullscreen .video-sub-line,
+.video-container:-webkit-full-screen .video-sub-line,
+.video-container:-moz-full-screen .video-sub-line,
+.video-container:-ms-fullscreen .video-sub-line {
+  font-size: 26px;
+  padding: 6px 18px;
+}
+
+.video-container:fullscreen .video-line-counter,
+.video-container:-webkit-full-screen .video-line-counter,
+.video-container:-moz-full-screen .video-line-counter,
+.video-container:-ms-fullscreen .video-line-counter {
+  z-index: 9999;
+}
+
+.video-container:fullscreen .video-fs-btn,
+.video-container:-webkit-full-screen .video-fs-btn,
+.video-container:-moz-full-screen .video-fs-btn,
+.video-container:-ms-fullscreen .video-fs-btn {
+  bottom: 14px;
+  z-index: 9999;
+}
