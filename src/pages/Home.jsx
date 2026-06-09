@@ -381,9 +381,8 @@ export default function Home() {
   const [currentSubText2, setCurrentSubText2] = useState('')
   const [currentLineIndex, setCurrentLineIndex] = useState(-1)
   const videoRef = useRef(null)
-  const containerRef = useRef(null)
   const animFrameRef = useRef(null)
-  const [isFullscreen, setIsFullscreen] = useState(false)
+  const fsOverlayRef = useRef(null)
 
   const [previewStyle] = useState('transparent')
   const previewLine = PREVIEW_LINES[1]
@@ -623,21 +622,6 @@ export default function Home() {
     if (videoRef.current) videoRef.current.playbackRate = speed
   }
 
-  const handleFullscreen = () => {
-    const container = containerRef.current
-    if (!container) return
-    if (!document.fullscreenElement) {
-      container.requestFullscreen().catch(() => {})
-    } else {
-      document.exitFullscreen().catch(() => {})
-    }
-  }
-
-  useEffect(() => {
-    const onFsChange = () => setIsFullscreen(!!document.fullscreenElement)
-    document.addEventListener('fullscreenchange', onFsChange)
-    return () => document.removeEventListener('fullscreenchange', onFsChange)
-  }, [])
 
   useEffect(() => {
     if (!videoUrl) return
@@ -664,6 +648,85 @@ export default function Home() {
     animFrameRef.current = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(animFrameRef.current)
   }, [videoUrl, blocksL1, blocksL2, offsetMs, liveOffset])
+
+  // ── Nuclear subtitle portal: floats over the video regardless of fullscreen mode ──
+  useEffect(() => {
+    // Create portal div on mount
+    const overlay = document.createElement('div')
+    overlay.id = 'ssh-sub-portal'
+    overlay.style.cssText = [
+      'position:fixed',
+      'pointer-events:none',
+      'z-index:2147483647',
+      'display:flex',
+      'flex-direction:column',
+      'align-items:center',
+      'justify-content:flex-end',
+      'gap:3px',
+      'padding:0 20px 60px',
+      'box-sizing:border-box',
+      'left:0','top:0','width:0','height:0',
+    ].join(';')
+    document.body.appendChild(overlay)
+    fsOverlayRef.current = overlay
+
+    return () => {
+      if (overlay.parentNode) overlay.parentNode.removeChild(overlay)
+    }
+  }, [])
+
+  // Update portal position and content every frame
+  useEffect(() => {
+    const updatePortal = () => {
+      const overlay = fsOverlayRef.current
+      const video = videoRef.current
+      if (!overlay || !video) { animFrameRef.current = requestAnimationFrame(updatePortal); return }
+
+      const rect = video.getBoundingClientRect()
+      overlay.style.left = rect.left + 'px'
+      overlay.style.top = rect.top + 'px'
+      overlay.style.width = rect.width + 'px'
+      overlay.style.height = rect.height + 'px'
+
+      const isFS = !!(document.fullscreenElement || document.webkitFullscreenElement)
+      const fontSize = isFS ? Math.max(20, rect.height * 0.04) + 'px' : '18px'
+      const bottomPad = isFS ? Math.max(50, rect.height * 0.08) + 'px' : '52px'
+      overlay.style.paddingBottom = bottomPad
+
+      // Build subtitle HTML
+      let html = ''
+      const subStyle = `background:rgba(0,0,0,0.82);color:#fff;font-family:'Instrument Sans',sans-serif;font-size:${fontSize};font-weight:500;padding:4px 14px;border-radius:4px;text-align:center;text-shadow:1px 1px 2px rgba(0,0,0,1);line-height:1.5;max-width:90%;display:inline-block`
+      const sub2Style = subStyle + ';color:#ffe066'
+
+      if (overlay._subText) {
+        overlay._subText.split('\n').forEach(line => {
+          if (line.trim()) html += `<div style="${subStyle}">${line}</div>`
+        })
+      }
+      if (overlay._subText2) {
+        overlay._subText2.split('\n').forEach(line => {
+          if (line.trim()) html += `<div style="${sub2Style}">${line}</div>`
+        })
+      }
+      overlay.innerHTML = html
+
+      animFrameRef.current = requestAnimationFrame(updatePortal)
+    }
+    animFrameRef.current = requestAnimationFrame(updatePortal)
+    return () => cancelAnimationFrame(animFrameRef.current)
+  }, [videoUrl])
+
+  // Push subtitle text into portal ref (avoids stale closure issues)
+  useEffect(() => {
+    const overlay = fsOverlayRef.current
+    if (overlay) overlay._subText = currentSubText
+  }, [currentSubText])
+
+  useEffect(() => {
+    const overlay = fsOverlayRef.current
+    if (overlay) overlay._subText2 = currentSubText2
+  }, [currentSubText2])
+
 
   const handleUploadSrt = (file, setBlocks, setFileName) => {
     if (!file) return
@@ -1120,12 +1183,11 @@ export default function Home() {
             </div>
           ) : (
             <div className="video-player-wrap">
-              <div className="video-container" ref={containerRef}>
+              <div className="video-container">
                 <video
                   ref={videoRef}
                   src={videoUrl}
                   controls
-                  controlsList="nofullscreen"
                   className="video-el"
                 />
                 {(currentSubText || currentSubText2) && (
@@ -1143,13 +1205,7 @@ export default function Home() {
                     {currentLineIndex >= 0 ? `Line ${currentLineIndex + 1} of ${blocksL1.length}` : `0 of ${blocksL1.length}`}
                   </div>
                 )}
-                <button
-                  className="video-fs-btn"
-                  onClick={handleFullscreen}
-                  title={isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'}
-                >
-                  {isFullscreen ? '✕ Exit' : '⛶ Fullscreen'}
-                </button>
+
               </div>
 
               <div className="video-controls-bar">
