@@ -388,9 +388,6 @@ export default function Home() {
   const offsetMsRef = useRef(0)
   const blocksL1Ref = useRef([])
   const blocksL2Ref = useRef([])
-  const sliderRef = useRef(null)
-  const sliderDisplayRef = useRef(null)
-  const [syncInputVal, setSyncInputVal] = useState('0.0')
 
   const [previewStyle] = useState('transparent')
   const previewLine = PREVIEW_LINES[1]
@@ -631,15 +628,7 @@ export default function Home() {
   }
 
   // Keep live refs in sync with state so the single rAF loop always has fresh values
-  useEffect(() => {
-    liveOffsetRef.current = liveOffset
-    setSyncInputVal((liveOffset / 1000).toFixed(1))
-    if (sliderRef.current) sliderRef.current.value = liveOffset
-    if (sliderDisplayRef.current) {
-      const v = liveOffset / 1000
-      sliderDisplayRef.current.textContent = v === 0 ? 'No offset' : v > 0 ? `+${v.toFixed(1)}s` : `${v.toFixed(1)}s`
-    }
-  }, [liveOffset])
+  useEffect(() => { liveOffsetRef.current = liveOffset }, [liveOffset])
   useEffect(() => { offsetMsRef.current = offsetMs }, [offsetMs])
   useEffect(() => { blocksL1Ref.current = blocksL1 }, [blocksL1])
   useEffect(() => { blocksL2Ref.current = blocksL2 }, [blocksL2])
@@ -679,22 +668,33 @@ export default function Home() {
       return parseInt(m[1])*3600000 + parseInt(m[2])*60000 + parseInt(m[3])*1000 + parseInt(m[4]||0)
     }
 
+    // Pre-parse all timestamps once — never re-parse per frame
+    const buildParsed = (blocks) => blocks.map(b => ({ text: b.text, start: toMs(b.start), end: toMs(b.end) }))
+    let parsed1 = buildParsed(blocksL1Ref.current)
+    let parsed2 = buildParsed(blocksL2Ref.current)
+    let lastBl1 = blocksL1Ref.current
+    let lastBl2 = blocksL2Ref.current
+
     let rafId
     let lastSubText = ''
     let lastSubText2 = ''
     let lastLineIdx = -1
 
     const tick = () => {
+      // Rebuild parsed cache only when blocks actually change
+      const bl1 = blocksL1Ref.current
+      const bl2 = blocksL2Ref.current
+      if (bl1 !== lastBl1) { parsed1 = buildParsed(bl1); lastBl1 = bl1 }
+      if (bl2 !== lastBl2) { parsed2 = buildParsed(bl2); lastBl2 = bl2 }
+
       // ── 1. Subtitle matching (uses refs — no stale closures, no re-mount on slider) ──
       const t = video.currentTime * 1000
       const offset = offsetMsRef.current + liveOffsetRef.current
       const adjustedT = t - offset
-      const bl1 = blocksL1Ref.current
-      const bl2 = blocksL2Ref.current
 
-      const matchIdx = bl1.findIndex(b => adjustedT >= toMs(b.start) && adjustedT <= toMs(b.end))
-      const match1 = matchIdx >= 0 ? bl1[matchIdx] : null
-      const match2 = bl2.length > 0 ? bl2.find(b => adjustedT >= toMs(b.start) && adjustedT <= toMs(b.end)) : null
+      const matchIdx = parsed1.findIndex(b => adjustedT >= b.start && adjustedT <= b.end)
+      const match1 = matchIdx >= 0 ? parsed1[matchIdx] : null
+      const match2 = parsed2.length > 0 ? parsed2.find(b => adjustedT >= b.start && adjustedT <= b.end) : null
 
       const newSub1 = match1 ? match1.text : ''
       const newSub2 = match2 ? match2.text : ''
@@ -707,24 +707,42 @@ export default function Home() {
       // ── 2. Portal overlay position + subtitle render ──
       const overlay = fsOverlayRef.current
       if (overlay) {
-        const rect = video.getBoundingClientRect()
-        overlay.style.left = rect.left + 'px'
-        overlay.style.top = rect.top + 'px'
-        overlay.style.width = rect.width + 'px'
-        overlay.style.height = rect.height + 'px'
+        const isFS = !!(
+          document.fullscreenElement ||
+          document.webkitFullscreenElement ||
+          document.mozFullScreenElement ||
+          document.msFullscreenElement
+        )
 
-        const isFS = !!(document.fullscreenElement || document.webkitFullscreenElement)
-        const fontSize = isFS ? Math.max(20, rect.height * 0.04) + 'px' : '18px'
-        const bottomPad = isFS ? Math.max(50, rect.height * 0.08) + 'px' : '52px'
-        overlay.style.paddingBottom = bottomPad
-
-        const subStyle = `background:rgba(0,0,0,0.82);color:#fff;font-family:'Instrument Sans',sans-serif;font-size:${fontSize};font-weight:500;padding:4px 14px;border-radius:4px;text-align:center;text-shadow:1px 1px 2px rgba(0,0,0,1);line-height:1.5;max-width:90%;display:inline-block`
-        const sub2Style = subStyle + ';color:#ffe066'
-
-        let html = ''
-        if (newSub1) newSub1.split('\n').forEach(line => { if (line.trim()) html += `<div style="${subStyle}">${line}</div>` })
-        if (newSub2) newSub2.split('\n').forEach(line => { if (line.trim()) html += `<div style="${sub2Style}">${line}</div>` })
-        overlay.innerHTML = html
+        if (isFS) {
+          // Fullscreen: cover entire screen — video rect is unreliable in native FS
+          overlay.style.left = '0'
+          overlay.style.top = '0'
+          overlay.style.width = '100vw'
+          overlay.style.height = '100vh'
+          overlay.style.paddingBottom = Math.max(60, window.innerHeight * 0.08) + 'px'
+          const fsSize = Math.max(22, window.innerHeight * 0.04) + 'px'
+          const subStyle = `background:rgba(0,0,0,0.85);color:#fff;font-family:'Instrument Sans',sans-serif;font-size:${fsSize};font-weight:500;padding:6px 18px;border-radius:4px;text-align:center;text-shadow:1px 1px 3px rgba(0,0,0,1);line-height:1.5;max-width:90%;display:inline-block`
+          const sub2Style = subStyle + ';color:#ffe066'
+          let html = ''
+          if (newSub1) newSub1.split('\n').forEach(line => { if (line.trim()) html += `<div style="${subStyle}">${line}</div>` })
+          if (newSub2) newSub2.split('\n').forEach(line => { if (line.trim()) html += `<div style="${sub2Style}">${line}</div>` })
+          overlay.innerHTML = html
+        } else {
+          // Normal mode: track exact video element position
+          const rect = video.getBoundingClientRect()
+          overlay.style.left = rect.left + 'px'
+          overlay.style.top = rect.top + 'px'
+          overlay.style.width = rect.width + 'px'
+          overlay.style.height = rect.height + 'px'
+          overlay.style.paddingBottom = '52px'
+          const subStyle = `background:rgba(0,0,0,0.82);color:#fff;font-family:'Instrument Sans',sans-serif;font-size:18px;font-weight:500;padding:4px 14px;border-radius:4px;text-align:center;text-shadow:1px 1px 2px rgba(0,0,0,1);line-height:1.5;max-width:90%;display:inline-block`
+          const sub2Style = subStyle + ';color:#ffe066'
+          let html = ''
+          if (newSub1) newSub1.split('\n').forEach(line => { if (line.trim()) html += `<div style="${subStyle}">${line}</div>` })
+          if (newSub2) newSub2.split('\n').forEach(line => { if (line.trim()) html += `<div style="${sub2Style}">${line}</div>` })
+          overlay.innerHTML = html
+        }
       }
 
       rafId = requestAnimationFrame(tick)
@@ -1232,52 +1250,26 @@ export default function Home() {
                 <div className="video-ctrl-group">
                   <div className="video-ctrl-label">
                     Live Sync &nbsp;
-                    <span ref={sliderDisplayRef} className="sync-value">No offset</span>
+                    <span className={`sync-value ${liveOffset > 0 ? 'delay' : liveOffset < 0 ? 'advance' : ''}`}>
+                      {liveOffset === 0 ? 'No offset' : liveOffset > 0 ? `+${(liveOffset/1000).toFixed(1)}s` : `${(liveOffset/1000).toFixed(1)}s`}
+                    </span>
                   </div>
                   <div className="video-sync-row">
                     <input
-                      ref={sliderRef}
                       type="range"
                       min="-300000"
                       max="300000"
                       step="100"
-                      defaultValue={0}
+                      value={liveOffset}
+                      onChange={e => setLiveOffset(Number(e.target.value))}
                       className="sync-slider"
-                      onInput={e => {
-                        const raw = Number(e.target.value)
-                        liveOffsetRef.current = raw
-                        const v = raw / 1000
-                        if (sliderDisplayRef.current) {
-                          sliderDisplayRef.current.textContent = v === 0 ? 'No offset' : v > 0 ? `+${v.toFixed(1)}s` : `${v.toFixed(1)}s`
-                          sliderDisplayRef.current.className = 'sync-value' + (v > 0 ? ' delay' : v < 0 ? ' advance' : '')
-                        }
-                        setSyncInputVal(v.toFixed(1))
-                      }}
-                      onMouseUp={e => setLiveOffset(Number(e.target.value))}
-                      onTouchEnd={e => setLiveOffset(Number(e.target.value))}
                     />
                     <input
-                      type="text"
-                      inputMode="decimal"
-                      className="sync-input sync-input-wide"
-                      value={syncInputVal}
-                      onChange={e => setSyncInputVal(e.target.value)}
-                      onBlur={e => {
-                        const parsed = parseFloat(e.target.value)
-                        if (!isNaN(parsed)) {
-                          const ms = Math.round(parsed * 1000)
-                          setLiveOffset(ms)
-                        } else {
-                          setSyncInputVal((liveOffset / 1000).toFixed(1))
-                        }
-                      }}
-                      onKeyDown={e => {
-                        if (e.key === 'Enter') {
-                          const parsed = parseFloat(e.target.value)
-                          if (!isNaN(parsed)) setLiveOffset(Math.round(parsed * 1000))
-                          e.target.blur()
-                        }
-                      }}
+                      type="number"
+                      className="sync-input"
+                      value={(liveOffset/1000).toFixed(1)}
+                      step="0.1"
+                      onChange={e => setLiveOffset(Math.round(parseFloat(e.target.value || 0) * 1000))}
                     />
                     <span className="sync-unit">s</span>
                     <button className="sync-reset" onClick={() => setLiveOffset(0)} title="Reset">↺</button>
