@@ -1099,3 +1099,7 @@ h1, h2, h3, h4 {
 .sub-panel-scroll::-webkit-scrollbar-thumb:hover {
   background: var(--muted);
 }
+
+.sync-input-wide {
+  width: 86px;
+}
