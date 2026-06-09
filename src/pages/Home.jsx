@@ -388,6 +388,9 @@ export default function Home() {
   const offsetMsRef = useRef(0)
   const blocksL1Ref = useRef([])
   const blocksL2Ref = useRef([])
+  const sliderRef = useRef(null)
+  const sliderDisplayRef = useRef(null)
+  const [syncInputVal, setSyncInputVal] = useState('0.0')
 
   const [previewStyle] = useState('transparent')
   const previewLine = PREVIEW_LINES[1]
@@ -628,7 +631,15 @@ export default function Home() {
   }
 
   // Keep live refs in sync with state so the single rAF loop always has fresh values
-  useEffect(() => { liveOffsetRef.current = liveOffset }, [liveOffset])
+  useEffect(() => {
+    liveOffsetRef.current = liveOffset
+    setSyncInputVal((liveOffset / 1000).toFixed(1))
+    if (sliderRef.current) sliderRef.current.value = liveOffset
+    if (sliderDisplayRef.current) {
+      const v = liveOffset / 1000
+      sliderDisplayRef.current.textContent = v === 0 ? 'No offset' : v > 0 ? `+${v.toFixed(1)}s` : `${v.toFixed(1)}s`
+    }
+  }, [liveOffset])
   useEffect(() => { offsetMsRef.current = offsetMs }, [offsetMs])
   useEffect(() => { blocksL1Ref.current = blocksL1 }, [blocksL1])
   useEffect(() => { blocksL2Ref.current = blocksL2 }, [blocksL2])
@@ -1221,26 +1232,52 @@ export default function Home() {
                 <div className="video-ctrl-group">
                   <div className="video-ctrl-label">
                     Live Sync &nbsp;
-                    <span className={`sync-value ${liveOffset > 0 ? 'delay' : liveOffset < 0 ? 'advance' : ''}`}>
-                      {liveOffset === 0 ? 'No offset' : liveOffset > 0 ? `+${(liveOffset/1000).toFixed(1)}s` : `${(liveOffset/1000).toFixed(1)}s`}
-                    </span>
+                    <span ref={sliderDisplayRef} className="sync-value">No offset</span>
                   </div>
                   <div className="video-sync-row">
                     <input
+                      ref={sliderRef}
                       type="range"
                       min="-300000"
                       max="300000"
                       step="100"
-                      value={liveOffset}
-                      onChange={e => setLiveOffset(Number(e.target.value))}
+                      defaultValue={0}
                       className="sync-slider"
+                      onInput={e => {
+                        const raw = Number(e.target.value)
+                        liveOffsetRef.current = raw
+                        const v = raw / 1000
+                        if (sliderDisplayRef.current) {
+                          sliderDisplayRef.current.textContent = v === 0 ? 'No offset' : v > 0 ? `+${v.toFixed(1)}s` : `${v.toFixed(1)}s`
+                          sliderDisplayRef.current.className = 'sync-value' + (v > 0 ? ' delay' : v < 0 ? ' advance' : '')
+                        }
+                        setSyncInputVal(v.toFixed(1))
+                      }}
+                      onMouseUp={e => setLiveOffset(Number(e.target.value))}
+                      onTouchEnd={e => setLiveOffset(Number(e.target.value))}
                     />
                     <input
-                      type="number"
-                      className="sync-input"
-                      value={(liveOffset/1000).toFixed(1)}
-                      step="0.1"
-                      onChange={e => setLiveOffset(Math.round(parseFloat(e.target.value || 0) * 1000))}
+                      type="text"
+                      inputMode="decimal"
+                      className="sync-input sync-input-wide"
+                      value={syncInputVal}
+                      onChange={e => setSyncInputVal(e.target.value)}
+                      onBlur={e => {
+                        const parsed = parseFloat(e.target.value)
+                        if (!isNaN(parsed)) {
+                          const ms = Math.round(parsed * 1000)
+                          setLiveOffset(ms)
+                        } else {
+                          setSyncInputVal((liveOffset / 1000).toFixed(1))
+                        }
+                      }}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') {
+                          const parsed = parseFloat(e.target.value)
+                          if (!isNaN(parsed)) setLiveOffset(Math.round(parsed * 1000))
+                          e.target.blur()
+                        }
+                      }}
                     />
                     <span className="sync-unit">s</span>
                     <button className="sync-reset" onClick={() => setLiveOffset(0)} title="Reset">↺</button>
