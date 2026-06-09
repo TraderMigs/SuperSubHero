@@ -383,6 +383,11 @@ export default function Home() {
   const videoRef = useRef(null)
   const animFrameRef = useRef(null)
   const fsOverlayRef = useRef(null)
+  // Live refs — updated every render, read inside rAF without stale closures
+  const liveOffsetRef = useRef(0)
+  const offsetMsRef = useRef(0)
+  const blocksL1Ref = useRef([])
+  const blocksL2Ref = useRef([])
 
   const [previewStyle] = useState('transparent')
   const previewLine = PREVIEW_LINES[1]
@@ -622,36 +627,15 @@ export default function Home() {
     if (videoRef.current) videoRef.current.playbackRate = speed
   }
 
+  // Keep live refs in sync with state so the single rAF loop always has fresh values
+  useEffect(() => { liveOffsetRef.current = liveOffset }, [liveOffset])
+  useEffect(() => { offsetMsRef.current = offsetMs }, [offsetMs])
+  useEffect(() => { blocksL1Ref.current = blocksL1 }, [blocksL1])
+  useEffect(() => { blocksL2Ref.current = blocksL2 }, [blocksL2])
 
-  useEffect(() => {
-    if (!videoUrl) return
-    const video = videoRef.current
-    if (!video) return
-    const toMs = (ts) => {
-      if (!ts) return 0
-      const m = ts.match(/(\d{2}):(\d{2}):(\d{2})[,.]?(\d{3})?/)
-      if (!m) return 0
-      return parseInt(m[1])*3600000 + parseInt(m[2])*60000 + parseInt(m[3])*1000 + parseInt(m[4]||0)
-    }
-    const tick = () => {
-      const t = video.currentTime * 1000
-      const offset = offsetMs + liveOffset
-      const adjustedT = t - offset
-      const matchIdx = blocksL1.findIndex(b => adjustedT >= toMs(b.start) && adjustedT <= toMs(b.end))
-      const match1 = matchIdx >= 0 ? blocksL1[matchIdx] : null
-      const match2 = blocksL2.length > 0 ? blocksL2.find(b => adjustedT >= toMs(b.start) && adjustedT <= toMs(b.end)) : null
-      setCurrentSubText(match1 ? match1.text : '')
-      setCurrentSubText2(match2 ? match2.text : '')
-      setCurrentLineIndex(matchIdx)
-      animFrameRef.current = requestAnimationFrame(tick)
-    }
-    animFrameRef.current = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(animFrameRef.current)
-  }, [videoUrl, blocksL1, blocksL2, offsetMs, liveOffset])
 
-  // ── Nuclear subtitle portal: floats over the video regardless of fullscreen mode ──
+  // ── Create subtitle portal overlay on mount (once) ──
   useEffect(() => {
-    // Create portal div on mount
     const overlay = document.createElement('div')
     overlay.id = 'ssh-sub-portal'
     overlay.style.cssText = [
@@ -663,69 +647,81 @@ export default function Home() {
       'align-items:center',
       'justify-content:flex-end',
       'gap:3px',
-      'padding:0 20px 60px',
       'box-sizing:border-box',
       'left:0','top:0','width:0','height:0',
     ].join(';')
     document.body.appendChild(overlay)
     fsOverlayRef.current = overlay
-
-    return () => {
-      if (overlay.parentNode) overlay.parentNode.removeChild(overlay)
-    }
+    return () => { if (overlay.parentNode) overlay.parentNode.removeChild(overlay) }
   }, [])
 
-  // Update portal position and content every frame
+  // ── Single unified rAF loop — reads all live values from refs, never restarts on slider drag ──
   useEffect(() => {
-    const updatePortal = () => {
-      const overlay = fsOverlayRef.current
-      const video = videoRef.current
-      if (!overlay || !video) { animFrameRef.current = requestAnimationFrame(updatePortal); return }
+    if (!videoUrl) return
+    const video = videoRef.current
+    if (!video) return
 
-      const rect = video.getBoundingClientRect()
-      overlay.style.left = rect.left + 'px'
-      overlay.style.top = rect.top + 'px'
-      overlay.style.width = rect.width + 'px'
-      overlay.style.height = rect.height + 'px'
-
-      const isFS = !!(document.fullscreenElement || document.webkitFullscreenElement)
-      const fontSize = isFS ? Math.max(20, rect.height * 0.04) + 'px' : '18px'
-      const bottomPad = isFS ? Math.max(50, rect.height * 0.08) + 'px' : '52px'
-      overlay.style.paddingBottom = bottomPad
-
-      // Build subtitle HTML
-      let html = ''
-      const subStyle = `background:rgba(0,0,0,0.82);color:#fff;font-family:'Instrument Sans',sans-serif;font-size:${fontSize};font-weight:500;padding:4px 14px;border-radius:4px;text-align:center;text-shadow:1px 1px 2px rgba(0,0,0,1);line-height:1.5;max-width:90%;display:inline-block`
-      const sub2Style = subStyle + ';color:#ffe066'
-
-      if (overlay._subText) {
-        overlay._subText.split('\n').forEach(line => {
-          if (line.trim()) html += `<div style="${subStyle}">${line}</div>`
-        })
-      }
-      if (overlay._subText2) {
-        overlay._subText2.split('\n').forEach(line => {
-          if (line.trim()) html += `<div style="${sub2Style}">${line}</div>`
-        })
-      }
-      overlay.innerHTML = html
-
-      animFrameRef.current = requestAnimationFrame(updatePortal)
+    const toMs = (ts) => {
+      if (!ts) return 0
+      const m = ts.match(/(\d{2}):(\d{2}):(\d{2})[,.]?(\d{3})?/)
+      if (!m) return 0
+      return parseInt(m[1])*3600000 + parseInt(m[2])*60000 + parseInt(m[3])*1000 + parseInt(m[4]||0)
     }
-    animFrameRef.current = requestAnimationFrame(updatePortal)
-    return () => cancelAnimationFrame(animFrameRef.current)
+
+    let rafId
+    let lastSubText = ''
+    let lastSubText2 = ''
+    let lastLineIdx = -1
+
+    const tick = () => {
+      // ── 1. Subtitle matching (uses refs — no stale closures, no re-mount on slider) ──
+      const t = video.currentTime * 1000
+      const offset = offsetMsRef.current + liveOffsetRef.current
+      const adjustedT = t - offset
+      const bl1 = blocksL1Ref.current
+      const bl2 = blocksL2Ref.current
+
+      const matchIdx = bl1.findIndex(b => adjustedT >= toMs(b.start) && adjustedT <= toMs(b.end))
+      const match1 = matchIdx >= 0 ? bl1[matchIdx] : null
+      const match2 = bl2.length > 0 ? bl2.find(b => adjustedT >= toMs(b.start) && adjustedT <= toMs(b.end)) : null
+
+      const newSub1 = match1 ? match1.text : ''
+      const newSub2 = match2 ? match2.text : ''
+
+      // Only trigger React state updates when text actually changes
+      if (newSub1 !== lastSubText) { lastSubText = newSub1; setCurrentSubText(newSub1) }
+      if (newSub2 !== lastSubText2) { lastSubText2 = newSub2; setCurrentSubText2(newSub2) }
+      if (matchIdx !== lastLineIdx) { lastLineIdx = matchIdx; setCurrentLineIndex(matchIdx) }
+
+      // ── 2. Portal overlay position + subtitle render ──
+      const overlay = fsOverlayRef.current
+      if (overlay) {
+        const rect = video.getBoundingClientRect()
+        overlay.style.left = rect.left + 'px'
+        overlay.style.top = rect.top + 'px'
+        overlay.style.width = rect.width + 'px'
+        overlay.style.height = rect.height + 'px'
+
+        const isFS = !!(document.fullscreenElement || document.webkitFullscreenElement)
+        const fontSize = isFS ? Math.max(20, rect.height * 0.04) + 'px' : '18px'
+        const bottomPad = isFS ? Math.max(50, rect.height * 0.08) + 'px' : '52px'
+        overlay.style.paddingBottom = bottomPad
+
+        const subStyle = `background:rgba(0,0,0,0.82);color:#fff;font-family:'Instrument Sans',sans-serif;font-size:${fontSize};font-weight:500;padding:4px 14px;border-radius:4px;text-align:center;text-shadow:1px 1px 2px rgba(0,0,0,1);line-height:1.5;max-width:90%;display:inline-block`
+        const sub2Style = subStyle + ';color:#ffe066'
+
+        let html = ''
+        if (newSub1) newSub1.split('\n').forEach(line => { if (line.trim()) html += `<div style="${subStyle}">${line}</div>` })
+        if (newSub2) newSub2.split('\n').forEach(line => { if (line.trim()) html += `<div style="${sub2Style}">${line}</div>` })
+        overlay.innerHTML = html
+      }
+
+      rafId = requestAnimationFrame(tick)
+    }
+
+    rafId = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(rafId)
   }, [videoUrl])
-
-  // Push subtitle text into portal ref (avoids stale closure issues)
-  useEffect(() => {
-    const overlay = fsOverlayRef.current
-    if (overlay) overlay._subText = currentSubText
-  }, [currentSubText])
-
-  useEffect(() => {
-    const overlay = fsOverlayRef.current
-    if (overlay) overlay._subText2 = currentSubText2
-  }, [currentSubText2])
 
 
   const handleUploadSrt = (file, setBlocks, setFileName) => {
