@@ -381,8 +381,10 @@ export default function Home() {
   const [currentSubText2, setCurrentSubText2] = useState('')
   const [currentLineIndex, setCurrentLineIndex] = useState(-1)
   const videoRef = useRef(null)
+  const containerRef = useRef(null)
   const animFrameRef = useRef(null)
   const fsOverlayRef = useRef(null)
+  const [isFullscreen, setIsFullscreen] = useState(false)
   // Live refs — updated every render, read inside rAF without stale closures
   const liveOffsetRef = useRef(0)
   const offsetMsRef = useRef(0)
@@ -626,6 +628,30 @@ export default function Home() {
     setVideoSpeed(speed)
     if (videoRef.current) videoRef.current.playbackRate = speed
   }
+
+  const handleContainerFullscreen = () => {
+    const el = containerRef.current
+    if (!el) return
+    if (document.fullscreenElement || document.webkitFullscreenElement) {
+      if (document.exitFullscreen) document.exitFullscreen()
+      else if (document.webkitExitFullscreen) document.webkitExitFullscreen()
+    } else {
+      if (el.requestFullscreen) el.requestFullscreen()
+      else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen()
+    }
+  }
+
+  useEffect(() => {
+    const onChange = () => {
+      setIsFullscreen(!!(document.fullscreenElement || document.webkitFullscreenElement))
+    }
+    document.addEventListener('fullscreenchange', onChange)
+    document.addEventListener('webkitfullscreenchange', onChange)
+    return () => {
+      document.removeEventListener('fullscreenchange', onChange)
+      document.removeEventListener('webkitfullscreenchange', onChange)
+    }
+  }, [])
 
   // Keep live refs in sync with state so the single rAF loop always has fresh values
   useEffect(() => { liveOffsetRef.current = liveOffset }, [liveOffset])
@@ -1208,11 +1234,12 @@ export default function Home() {
             </div>
           ) : (
             <div className="video-player-wrap">
-              <div className="video-container">
+              <div className="video-container" ref={containerRef}>
                 <video
                   ref={videoRef}
                   src={videoUrl}
                   controls
+                  controlsList="nofullscreen nodownload"
                   className="video-el"
                 />
                 {(currentSubText || currentSubText2) && (
@@ -1230,7 +1257,13 @@ export default function Home() {
                     {currentLineIndex >= 0 ? `Line ${currentLineIndex + 1} of ${blocksL1.length}` : `0 of ${blocksL1.length}`}
                   </div>
                 )}
-
+                <button
+                  className="video-fs-btn"
+                  onClick={handleContainerFullscreen}
+                  title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
+                >
+                  {isFullscreen ? '✕ Exit' : '⛶ Full'}
+                </button>
               </div>
 
               <div className="video-controls-bar">
