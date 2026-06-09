@@ -381,7 +381,9 @@ export default function Home() {
   const [currentSubText2, setCurrentSubText2] = useState('')
   const [currentLineIndex, setCurrentLineIndex] = useState(-1)
   const videoRef = useRef(null)
+  const containerRef = useRef(null)
   const animFrameRef = useRef(null)
+  const [isFullscreen, setIsFullscreen] = useState(false)
 
   const [previewStyle] = useState('transparent')
   const previewLine = PREVIEW_LINES[1]
@@ -620,6 +622,22 @@ export default function Home() {
     setVideoSpeed(speed)
     if (videoRef.current) videoRef.current.playbackRate = speed
   }
+
+  const handleFullscreen = () => {
+    const container = containerRef.current
+    if (!container) return
+    if (!document.fullscreenElement) {
+      container.requestFullscreen().catch(() => {})
+    } else {
+      document.exitFullscreen().catch(() => {})
+    }
+  }
+
+  useEffect(() => {
+    const onFsChange = () => setIsFullscreen(!!document.fullscreenElement)
+    document.addEventListener('fullscreenchange', onFsChange)
+    return () => document.removeEventListener('fullscreenchange', onFsChange)
+  }, [])
 
   useEffect(() => {
     if (!videoUrl) return
@@ -1102,11 +1120,12 @@ export default function Home() {
             </div>
           ) : (
             <div className="video-player-wrap">
-              <div className="video-container">
+              <div className="video-container" ref={containerRef}>
                 <video
                   ref={videoRef}
                   src={videoUrl}
                   controls
+                  controlsList="nofullscreen"
                   className="video-el"
                 />
                 {(currentSubText || currentSubText2) && (
@@ -1124,6 +1143,13 @@ export default function Home() {
                     {currentLineIndex >= 0 ? `Line ${currentLineIndex + 1} of ${blocksL1.length}` : `0 of ${blocksL1.length}`}
                   </div>
                 )}
+                <button
+                  className="video-fs-btn"
+                  onClick={handleFullscreen}
+                  title={isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'}
+                >
+                  {isFullscreen ? '✕ Exit' : '⛶ Fullscreen'}
+                </button>
               </div>
 
               <div className="video-controls-bar">
