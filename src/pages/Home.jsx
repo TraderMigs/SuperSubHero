@@ -66,6 +66,28 @@ function ReleaseRow({ sub, selected, comparedToName, onClick }) {
   )
 }
 
+// Find existing subtitles, or translate from the other panel.
+//
+// Translation used to be reachable only after a search came back empty, and the dropdowns only
+// listed the 37 languages subtitle sites actually carry, while the translator handles 103. So a
+// language could be impossible to reach in search mode purely because files for it existed.
+function ModeToggle({ mode, onChange, otherLabel }) {
+  return (
+    <div className="type-toggle" style={{ marginBottom: 8 }}>
+      <button className={`type-btn ${mode === 'find' ? 'active' : ''}`} onClick={() => onChange('find')}>
+        Find file
+      </button>
+      <button
+        className={`type-btn ${mode === 'translate' ? 'active' : ''}`}
+        onClick={() => onChange('translate')}
+        title={`Translate the ${otherLabel} track with AI instead of downloading a file`}
+      >
+        ✨ Translate
+      </button>
+    </div>
+  )
+}
+
 // Wrong-language warning, shown wherever the choice is being made.
 function LanguageWarning({ message }) {
   if (!message) return null
@@ -542,6 +564,9 @@ export default function Home() {
 
   const [lang1, setLang1] = useState('EN')
   const [lang2, setLang2] = useState('')
+  // Per panel: download a file, or translate the other panel's track.
+  const [mode1, setMode1] = useState('find')
+  const [mode2, setMode2] = useState('find')
 
   const [fetchingL1, setFetchingL1] = useState(false)
   const [fetchingL2, setFetchingL2] = useState(false)
@@ -1132,6 +1157,32 @@ export default function Home() {
   const lang2Label = lang2 ? (LANGUAGES.find(l => l.code === lang2)?.label || lang2) : null
   const hasDual = lang2 && blocksL2.length > 0
 
+  const isSearchable = code => SEARCH_LANGUAGES.some(l => l.code === code)
+
+  // Switching mode clears whatever the other mode produced, and drops a language that the new
+  // mode cannot offer: the translate list has 103 entries, the download list only 37.
+  const changeMode1 = next => {
+    setMode1(next)
+    setBlocksL1([]); setSubResultsL1([]); setSelectedSubL1(null); setErrorL1(''); setLangWarnL1('')
+    if (next === 'find' && !isSearchable(lang1)) setLang1('EN')
+  }
+  const changeMode2 = next => {
+    setMode2(next)
+    setBlocksL2([]); setSubResultsL2([]); setSelectedSubL2(null); setErrorL2(''); setLangWarnL2('')
+    if (next === 'find' && !isSearchable(lang2)) setLang2('')
+  }
+
+  const translateOptions1 = LANGUAGES.filter(l => l.code !== lang2)
+  const translateOptions2 = LANGUAGES.filter(l => l.code !== lang1)
+
+  // What a translation would actually read from: the other panel when it holds text, otherwise
+  // English, which gets downloaded as a pivot. Asking for the language it is already in would
+  // spend API credit to produce a copy, so that combination is refused.
+  const sourceLangFor1 = blocksL2.length && lang2 ? lang2 : 'EN'
+  const sourceLangFor2 = blocksL1.length && lang1 ? lang1 : 'EN'
+  const pointlessTranslate1 = mode1 === 'translate' && lang1 === sourceLangFor1
+  const pointlessTranslate2 = mode2 === 'translate' && lang2 === sourceLangFor2
+
   // How the two tracks will be merged: line by line when they share a timeline (one is a
   // translation of the other), by time overlap when they are two different files.
   const mergeInfo = useMemo(
@@ -1299,14 +1350,36 @@ export default function Home() {
             <div className="controls-title">Controls</div>
 
             <div className="ctrl-label">Primary Language</div>
+            <ModeToggle mode={mode1} onChange={changeMode1} otherLabel={lang2Label || 'other'} />
             <select className="lang-select" value={lang1} onChange={e => { setLang1(e.target.value); setBlocksL1([]); setSubResultsL1([]); setSelectedSubL1(null); setErrorL1(''); setLangWarnL1('') }}>
-              {SEARCH_LANGUAGES.map(l => <option key={l.code} value={l.code}>{l.label}</option>)}
+              {(mode1 === 'translate' ? translateOptions1 : SEARCH_LANGUAGES.filter(l => l.code !== lang2))
+                .map(l => <option key={l.code} value={l.code}>{l.label}</option>)}
             </select>
-            <button className="fetch-btn" onClick={() => fetchSubtitleList(lang1, setSubResultsL1, setFetchingL1, setErrorL1)} disabled={fetchingL1 || !selectedTitle}>
-              {fetchingL1 ? 'Searching...' : `Find ${lang1Label} Subtitles`}
-            </button>
 
-            {errorL1 === 'not_found' && !blocksL1.length && !translatingL1 && !autoTranslatingL1 && (
+            {mode1 === 'find' ? (
+              <button className="fetch-btn" onClick={() => fetchSubtitleList(lang1, setSubResultsL1, setFetchingL1, setErrorL1)} disabled={fetchingL1 || !selectedTitle}>
+                {fetchingL1 ? 'Searching...' : `Find ${lang1Label} Subtitles`}
+              </button>
+            ) : (
+              <>
+                <button
+                  className="fetch-btn ai-btn"
+                  onClick={() => translateFallback(lang1, setBlocksL1, setErrorL1, setTranslatingL1, setTranslateSourceL1, blocksL2.length > 0 ? blocksL2 : null, setTranslateProgressL1)}
+                  disabled={translatingL1 || !selectedTitle || pointlessTranslate1}
+                >
+                  {translatingL1 ? 'Translating...' : blocksL1.length ? `Redo ${lang1Label} translation` : `✨ Translate to ${lang1Label}`}
+                </button>
+                <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6, lineHeight: 1.5 }}>
+                  {pointlessTranslate1
+                    ? `The source is already ${lang1Label}. Pick a different language, or use Find file instead.`
+                    : blocksL2.length > 0
+                      ? `Translated from the ${lang2Label} track, so the timing matches it exactly.`
+                      : 'English subtitles are downloaded and translated from, so the timing comes from those.'}
+                </div>
+              </>
+            )}
+
+            {mode1 === 'find' && errorL1 === 'not_found' && !blocksL1.length && !translatingL1 && !autoTranslatingL1 && (
               <div className="ai-fallback-box">
                 <div className="ai-fallback-text">No {lang1Label} subtitles found.</div>
                 <button className="fetch-btn ai-btn" onClick={() => translateFallback(lang1, setBlocksL1, setErrorL1, setTranslatingL1, setTranslateSourceL1, blocksL2.length > 0 ? blocksL2 : null, setTranslateProgressL1)}>
@@ -1317,32 +1390,55 @@ export default function Home() {
 
             {errorL1 && errorL1 !== 'not_found' && !subResultsL1.length && <div className="status-bar error">{errorL1}</div>}
 
-            <ReleasePicker
-              releases={subResultsL1
-                .filter(s => !episode || !s.episode || s.episode === parseInt(episode) || s.full_season)
-                .slice(0, RELEASES_SHOWN)}
-              selected={selectedSubL1}
-              comparedToName={selectedSubL2?.name}
-              langLabel={lang1Label}
-              warning={langWarnL1}
-              onPick={s => { setSelectedSubL1(s); loadSubContent(s, setLoadingL1, setBlocksL1, setErrorL1, subResultsL1, lang1, lang1Label, setLangWarnL1) }}
-            />
+            {mode1 === 'find' && (
+              <ReleasePicker
+                releases={subResultsL1
+                  .filter(s => !episode || !s.episode || s.episode === parseInt(episode) || s.full_season)
+                  .slice(0, RELEASES_SHOWN)}
+                selected={selectedSubL1}
+                comparedToName={selectedSubL2?.name}
+                langLabel={lang1Label}
+                warning={langWarnL1}
+                onPick={s => { setSelectedSubL1(s); loadSubContent(s, setLoadingL1, setBlocksL1, setErrorL1, subResultsL1, lang1, lang1Label, setLangWarnL1) }}
+              />
+            )}
 
             <div className="divider" />
 
             <div className="ctrl-label">Second Language (Optional)</div>
+            <ModeToggle mode={mode2} onChange={changeMode2} otherLabel={lang1Label} />
             <select className="lang-select" value={lang2} onChange={e => { setLang2(e.target.value); setBlocksL2([]); setSubResultsL2([]); setSelectedSubL2(null); setErrorL2(''); setLangWarnL2('') }}>
               <option value="">— None —</option>
-              {SEARCH_LANGUAGES.filter(l => l.code !== lang1).map(l => <option key={l.code} value={l.code}>{l.label}</option>)}
+              {(mode2 === 'translate' ? translateOptions2 : SEARCH_LANGUAGES.filter(l => l.code !== lang1))
+                .map(l => <option key={l.code} value={l.code}>{l.label}</option>)}
             </select>
 
             {lang2 && (
               <>
-                <button className="fetch-btn" onClick={() => fetchSubtitleList(lang2, setSubResultsL2, setFetchingL2, setErrorL2)} disabled={fetchingL2 || !selectedTitle}>
-                  {fetchingL2 ? 'Searching...' : `Find ${lang2Label} Subtitles`}
-                </button>
+                {mode2 === 'find' ? (
+                  <button className="fetch-btn" onClick={() => fetchSubtitleList(lang2, setSubResultsL2, setFetchingL2, setErrorL2)} disabled={fetchingL2 || !selectedTitle}>
+                    {fetchingL2 ? 'Searching...' : `Find ${lang2Label} Subtitles`}
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      className="fetch-btn ai-btn"
+                      onClick={() => translateFallback(lang2, setBlocksL2, setErrorL2, setTranslatingL2, setTranslateSourceL2, blocksL1.length > 0 ? blocksL1 : null, setTranslateProgressL2)}
+                      disabled={translatingL2 || !selectedTitle || pointlessTranslate2}
+                    >
+                      {translatingL2 ? 'Translating...' : blocksL2.length ? `Redo ${lang2Label} translation` : `✨ Translate to ${lang2Label}`}
+                    </button>
+                    <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6, lineHeight: 1.5 }}>
+                      {pointlessTranslate2
+                        ? `The source is already ${lang2Label}. Pick a different language, or use Find file instead.`
+                        : blocksL1.length > 0
+                          ? `Translated from the ${lang1Label} track, so both tracks line up exactly.`
+                          : `Load the ${lang1Label} track first, or English subtitles are downloaded and translated from instead.`}
+                    </div>
+                  </>
+                )}
 
-                {errorL2 === 'not_found' && !blocksL2.length && !translatingL2 && !autoTranslatingL2 && (
+                {mode2 === 'find' && errorL2 === 'not_found' && !blocksL2.length && !translatingL2 && !autoTranslatingL2 && (
                   <div className="ai-fallback-box">
                     <div className="ai-fallback-text">No {lang2Label} subtitles found.</div>
                     <button className="fetch-btn ai-btn" onClick={() => translateFallback(lang2, setBlocksL2, setErrorL2, setTranslatingL2, setTranslateSourceL2, blocksL1.length > 0 ? blocksL1 : null, setTranslateProgressL2)}>
@@ -1353,16 +1449,18 @@ export default function Home() {
 
                 {errorL2 && errorL2 !== 'not_found' && !subResultsL2.length && <div className="status-bar error">{errorL2}</div>}
 
-                <ReleasePicker
-                  releases={subResultsL2
-                    .filter(s => !episode || !s.episode || s.episode === parseInt(episode) || s.full_season)
-                    .slice(0, RELEASES_SHOWN)}
-                  selected={selectedSubL2}
-                  comparedToName={selectedSubL1?.name}
-                  langLabel={lang2Label || 'Second'}
-                  warning={langWarnL2}
-                  onPick={s => { setSelectedSubL2(s); loadSubContent(s, setLoadingL2, setBlocksL2, setErrorL2, subResultsL2, lang2, lang2Label, setLangWarnL2) }}
-                />
+                {mode2 === 'find' && (
+                  <ReleasePicker
+                    releases={subResultsL2
+                      .filter(s => !episode || !s.episode || s.episode === parseInt(episode) || s.full_season)
+                      .slice(0, RELEASES_SHOWN)}
+                    selected={selectedSubL2}
+                    comparedToName={selectedSubL1?.name}
+                    langLabel={lang2Label || 'Second'}
+                    warning={langWarnL2}
+                    onPick={s => { setSelectedSubL2(s); loadSubContent(s, setLoadingL2, setBlocksL2, setErrorL2, subResultsL2, lang2, lang2Label, setLangWarnL2) }}
+                  />
+                )}
               </>
             )}
 
