@@ -4,6 +4,7 @@ import { parseSrt, buildSrt, mergeSrts, mergeSrtsDetailed, downloadFile, applyOf
 import { renderSubtitleOverlay, overlayRenderKey, fullscreenPaddingBottom } from '../lib/subOverlay.js'
 import { analyzeAlignment, describeAlignment, isIdentityTransform } from '../lib/align.js'
 import { parseRelease, compareReleases, MATCH_COLORS } from '../lib/release.js'
+import { verifyLanguage } from '../lib/language.js'
 
 // Shown in the Preview box only until real subtitle lines are loaded.
 const PREVIEW_SAMPLE = 'May the Force be with you.'
@@ -61,6 +62,72 @@ function ReleaseRow({ sub, selected, comparedToName, onClick }) {
           {PROVIDER_ABBR[sub.source] || sub.source}
         </div>
       </div>
+    </div>
+  )
+}
+
+// Wrong-language warning, shown wherever the choice is being made.
+function LanguageWarning({ message }) {
+  if (!message) return null
+  return (
+    <div
+      style={{
+        marginTop: 8, padding: '8px 10px', borderRadius: 8, fontSize: 11, lineHeight: 1.5,
+        border: '1px solid var(--error)', background: 'rgba(241,53,74,0.1)', color: 'var(--error)',
+      }}
+    >
+      <div style={{ fontWeight: 600 }}>Wrong language</div>
+      <div style={{ marginTop: 2 }}>{message}</div>
+      <div style={{ marginTop: 2 }}>Pick a different release below.</div>
+    </div>
+  )
+}
+
+// The release list, which folds away once a release is chosen.
+//
+// It runs to twelve tall rows per language and had no way to close, so choosing a release left
+// the controls column enormous and the rest of the page pushed far below the fold.
+function ReleasePicker({ releases, selected, comparedToName, onPick, langLabel, warning }) {
+  const [open, setOpen] = React.useState(true)
+  const wasSelected = React.useRef(false)
+
+  // Fold up the moment a release is picked, and open again if the list itself changes.
+  React.useEffect(() => {
+    if (selected && !wasSelected.current) { setOpen(false); wasSelected.current = true }
+    if (!selected) wasSelected.current = false
+  }, [selected])
+  React.useEffect(() => { setOpen(!selected) }, [releases])
+
+  if (!releases.length) return null
+
+  return (
+    <div>
+      <div
+        className="ctrl-label"
+        onClick={() => setOpen(o => !o)}
+        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', gap: 8 }}
+      >
+        <span>{selected ? `${langLabel} release` : 'Pick a release'}</span>
+        <span style={{ color: 'var(--accent2)', textTransform: 'none', letterSpacing: 0 }}>
+          {open ? '▲ Hide' : `▼ Change (${releases.length})`}
+        </span>
+      </div>
+
+      {!open && selected && (
+        <ReleaseRow sub={selected} selected comparedToName={comparedToName} onClick={() => setOpen(true)} />
+      )}
+
+      <LanguageWarning message={warning} />
+
+      {open && releases.map((s, i) => (
+        <ReleaseRow
+          key={s.id || i}
+          sub={s}
+          selected={selected?.id === s.id}
+          comparedToName={comparedToName}
+          onClick={() => onPick(s)}
+        />
+      ))}
     </div>
   )
 }
@@ -478,6 +545,9 @@ export default function Home() {
   const [blocksL2, setBlocksL2] = useState([])
   const [errorL1, setErrorL1] = useState('')
   const [errorL2, setErrorL2] = useState('')
+  // Set when a downloaded file turns out not to be in the language it was filed under.
+  const [langWarnL1, setLangWarnL1] = useState('')
+  const [langWarnL2, setLangWarnL2] = useState('')
 
   const [translatingL1, setTranslatingL1] = useState(false)
   const [translatingL2, setTranslatingL2] = useState(false)
@@ -609,10 +679,11 @@ export default function Home() {
     }
   }
 
-  const loadSubContent = async (sub, setLoading, setBlocks, setError, fallbackList) => {
+  const loadSubContent = async (sub, setLoading, setBlocks, setError, fallbackList, langCode = null, langLabel = '', setLangWarning = null) => {
     setLoading(true)
     setError('')
     setBlocks([])
+    if (setLangWarning) setLangWarning('')
 
     const tryFetch = async (subItem) => {
       const resp = await fetch('/api/fetch-sub', {
@@ -631,9 +702,20 @@ export default function Home() {
       return parsed
     }
 
+    // Providers go by whatever the uploader filed the file under, and that is sometimes simply
+    // wrong: a file offered as Thai turned out to be Sinhala, and it aligned and merged
+    // perfectly, because nothing else here looks at what language the text actually is.
+    const checkLanguage = (parsed) => {
+      if (!setLangWarning || !langCode) return
+      const sample = parsed.slice(0, 400).map(b => b.text).join('\n')
+      const result = verifyLanguage(sample, langCode, langLabel || langCode)
+      setLangWarning(result.status === 'mismatch' ? result.message : '')
+    }
+
     try {
       const parsed = await tryFetch(sub)
       setBlocks(parsed)
+      checkLanguage(parsed)
     } catch (err) {
       if (fallbackList && fallbackList.length > 0) {
         for (const next of fallbackList) {
@@ -641,6 +723,7 @@ export default function Home() {
           try {
             const parsed = await tryFetch(next)
             setBlocks(parsed)
+            checkLanguage(parsed)
             setError('')
             setLoading(false)
             return
@@ -1204,7 +1287,7 @@ export default function Home() {
             <div className="controls-title">Controls</div>
 
             <div className="ctrl-label">Primary Language</div>
-            <select className="lang-select" value={lang1} onChange={e => { setLang1(e.target.value); setBlocksL1([]); setSubResultsL1([]); setSelectedSubL1(null); setErrorL1('') }}>
+            <select className="lang-select" value={lang1} onChange={e => { setLang1(e.target.value); setBlocksL1([]); setSubResultsL1([]); setSelectedSubL1(null); setErrorL1(''); setLangWarnL1('') }}>
               {SEARCH_LANGUAGES.map(l => <option key={l.code} value={l.code}>{l.label}</option>)}
             </select>
             <button className="fetch-btn" onClick={() => fetchSubtitleList(lang1, setSubResultsL1, setFetchingL1, setErrorL1)} disabled={fetchingL1 || !selectedTitle}>
@@ -1222,28 +1305,21 @@ export default function Home() {
 
             {errorL1 && errorL1 !== 'not_found' && !subResultsL1.length && <div className="status-bar error">{errorL1}</div>}
 
-            {subResultsL1.length > 0 && (
-              <div>
-                <div className="ctrl-label">Pick a release</div>
-                {subResultsL1
-                  .filter(s => !episode || !s.episode || s.episode === parseInt(episode) || s.full_season)
-                  .slice(0, RELEASES_SHOWN)
-                  .map((s, i) => (
-                    <ReleaseRow
-                      key={s.id || i}
-                      sub={s}
-                      selected={selectedSubL1?.id === s.id}
-                      comparedToName={selectedSubL2?.name}
-                      onClick={() => { setSelectedSubL1(s); loadSubContent(s, setLoadingL1, setBlocksL1, setErrorL1, subResultsL1) }}
-                    />
-                  ))}
-              </div>
-            )}
+            <ReleasePicker
+              releases={subResultsL1
+                .filter(s => !episode || !s.episode || s.episode === parseInt(episode) || s.full_season)
+                .slice(0, RELEASES_SHOWN)}
+              selected={selectedSubL1}
+              comparedToName={selectedSubL2?.name}
+              langLabel={lang1Label}
+              warning={langWarnL1}
+              onPick={s => { setSelectedSubL1(s); loadSubContent(s, setLoadingL1, setBlocksL1, setErrorL1, subResultsL1, lang1, lang1Label, setLangWarnL1) }}
+            />
 
             <div className="divider" />
 
             <div className="ctrl-label">Second Language (Optional)</div>
-            <select className="lang-select" value={lang2} onChange={e => { setLang2(e.target.value); setBlocksL2([]); setSubResultsL2([]); setSelectedSubL2(null); setErrorL2('') }}>
+            <select className="lang-select" value={lang2} onChange={e => { setLang2(e.target.value); setBlocksL2([]); setSubResultsL2([]); setSelectedSubL2(null); setErrorL2(''); setLangWarnL2('') }}>
               <option value="">— None —</option>
               {SEARCH_LANGUAGES.filter(l => l.code !== lang1).map(l => <option key={l.code} value={l.code}>{l.label}</option>)}
             </select>
@@ -1265,23 +1341,16 @@ export default function Home() {
 
                 {errorL2 && errorL2 !== 'not_found' && !subResultsL2.length && <div className="status-bar error">{errorL2}</div>}
 
-                {subResultsL2.length > 0 && (
-                  <div>
-                    <div className="ctrl-label">Pick a release</div>
-                    {subResultsL2
-                      .filter(s => !episode || !s.episode || s.episode === parseInt(episode) || s.full_season)
-                      .slice(0, RELEASES_SHOWN)
-                      .map((s, i) => (
-                        <ReleaseRow
-                          key={s.id || i}
-                          sub={s}
-                          selected={selectedSubL2?.id === s.id}
-                          comparedToName={selectedSubL1?.name}
-                          onClick={() => { setSelectedSubL2(s); loadSubContent(s, setLoadingL2, setBlocksL2, setErrorL2, subResultsL2) }}
-                        />
-                      ))}
-                  </div>
-                )}
+                <ReleasePicker
+                  releases={subResultsL2
+                    .filter(s => !episode || !s.episode || s.episode === parseInt(episode) || s.full_season)
+                    .slice(0, RELEASES_SHOWN)}
+                  selected={selectedSubL2}
+                  comparedToName={selectedSubL1?.name}
+                  langLabel={lang2Label || 'Second'}
+                  warning={langWarnL2}
+                  onPick={s => { setSelectedSubL2(s); loadSubContent(s, setLoadingL2, setBlocksL2, setErrorL2, subResultsL2, lang2, lang2Label, setLangWarnL2) }}
+                />
               </>
             )}
 

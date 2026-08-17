@@ -119,8 +119,14 @@ export function compareReleases(chosen, candidate) {
   const a = typeof chosen === 'string' ? parseRelease(chosen) : chosen
   const b = typeof candidate === 'string' ? parseRelease(candidate) : candidate
 
+  // Labels say "cut" rather than "match" on purpose. This only compares which video release the
+  // subtitles were timed against. It says nothing about whether the file is in the right
+  // language, and a plain "Match" was read as exactly that: a file offered as Thai but actually
+  // in Sinhala earned a Match here, because as a video cut it genuinely did match.
+  const timing = 'Timing only, not language'
+
   if (a.group && b.group && a.group.toLowerCase() === b.group.toLowerCase()) {
-    return { level: 'match', label: 'Match', reason: `Same release group (${b.group})` }
+    return { level: 'match', label: 'Same cut', reason: `Same release group (${b.group}). ${timing}.` }
   }
 
   const aFam = a.sourceFamily, bFam = b.sourceFamily
@@ -129,19 +135,19 @@ export function compareReleases(chosen, candidate) {
   }
 
   if ((aFam === 'CAM') !== (bFam === 'CAM')) {
-    return { level: 'bad', label: 'Avoid', reason: 'A camera recording will not line up with a clean source' }
+    return { level: 'bad', label: 'Avoid', reason: `A camera recording will not line up with a clean source. ${timing}.` }
   }
 
   if (aFam === bFam) {
     if (a.resolution && b.resolution && a.resolution === b.resolution) {
-      return { level: 'match', label: 'Match', reason: `Both ${bFam} ${b.resolution}` }
+      return { level: 'match', label: 'Same cut', reason: `Both ${bFam} ${b.resolution}. ${timing}.` }
     }
-    return { level: 'likely', label: 'Close', reason: `Both ${bFam}, different resolution` }
+    return { level: 'likely', label: 'Likely', reason: `Both ${bFam}, different resolution. ${timing}.` }
   }
 
   const affinity = affinityFor(aFam, bFam)
-  if (affinity === 'likely') return { level: 'likely', label: 'Close', reason: `${aFam} and ${bFam} usually share the same runtime` }
-  if (affinity === 'unlikely') return { level: 'unlikely', label: 'Differs', reason: `${bFam} is a different cut from ${aFam}` }
+  if (affinity === 'likely') return { level: 'likely', label: 'Likely', reason: `${aFam} and ${bFam} usually share the same runtime. ${timing}.` }
+  if (affinity === 'unlikely') return { level: 'unlikely', label: 'Differs', reason: `${bFam} is a different cut from ${aFam}. ${timing}.` }
   return { level: 'unsure', label: '?', reason: `${bFam} against ${aFam} is hard to predict` }
 }
 

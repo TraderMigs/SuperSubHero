@@ -61,7 +61,7 @@ check('every badge has a reason', ['match', 'likely', 'unsure', 'unlikely', 'bad
   const r = compareReleases(bluray1080, l === 'bad' ? 'X.CAM-Q' : l === 'unlikely' ? 'X.HDTV-Q' : l === 'unsure' ? 'x' : l === 'likely' ? 'X.720p.BluRay-Q' : bluray1080)
   return typeof r.reason === 'string' && r.reason.length > 8
 }))
-check('the real pair from the test file reads as close, not a match', (() => {
+check('the real pair from the test file reads as likely or same cut', (() => {
   const r = compareReleases('The Gangster The Cop The Devil (2019) 720p WEB-DL Ganool', 'The Gangster the Cop the Devil (2019) BluRay 720p x264 900MB Ganool.ws')
   return r.level === 'likely' || r.level === 'match'
 })(), JSON.stringify(compareReleases('The Gangster The Cop The Devil (2019) 720p WEB-DL Ganool', 'The Gangster the Cop the Devil (2019) BluRay 720p x264 900MB Ganool.ws')))
