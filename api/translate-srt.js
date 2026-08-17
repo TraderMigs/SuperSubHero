@@ -6,6 +6,8 @@
 // one targeted retry, and whatever is left keeps the original text and is counted in
 // missingCount so the page can tell the user.
 
+import { requireAuth } from './_auth.js'
+
 const DEFAULT_MODEL = process.env.OPENAI_MODEL || 'gpt-4.1-mini'
 const FALLBACK_MODEL = 'gpt-4o-mini'
 const MAX_RETRY_BLOCKS = 200
@@ -144,7 +146,7 @@ function formatBatch(blocks, indices) {
   return indices.map(i => `[${i + 1}]\n${blocks[i].text}`).join('\n\n')
 }
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
 
   const { srtContent, targetLanguage, contextBefore, title } = req.body || {}
@@ -223,3 +225,5 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: err.message })
   }
 }
+
+export default requireAuth(handler)

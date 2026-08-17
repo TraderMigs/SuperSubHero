@@ -1,4 +1,6 @@
-export default async function handler(req, res) {
+import { requireAuth } from './_auth.js'
+
+async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' })
 
   const { query, type = 'movie', season, episode, year } = req.query
@@ -38,3 +40,5 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: err.message })
   }
 }
+
+export default requireAuth(handler)

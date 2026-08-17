@@ -1,4 +1,5 @@
 import JSZip from 'jszip'
+import { requireAuth } from './_auth.js'
 
 function decodeText(bytes) {
   try {
@@ -133,7 +134,7 @@ async function fetchSubSource(ss_id, SS_KEY) {
   }
 }
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ success: false, error: 'Method not allowed' })
   }
@@ -187,3 +188,5 @@ export default async function handler(req, res) {
       : 'All subtitle download methods failed.',
   })
 }
+
+export default requireAuth(handler)

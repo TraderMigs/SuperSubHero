@@ -1,3 +1,5 @@
+import { requireAuth } from './_auth.js'
+
 const OS_LANG_MAP = {
   'EN': 'en', 'FR': 'fr', 'ES': 'es', 'DE': 'de', 'IT': 'it',
   'PT': 'pt', 'ZH': 'zh-CN', 'ZT': 'zh-TW', 'JA': 'ja', 'KO': 'ko',
@@ -250,7 +252,7 @@ function mergeResults(subdlSubs, openSubs, ssSubs, episode) {
     .slice(0, 40)
 }
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' })
   }
@@ -296,3 +298,5 @@ export default async function handler(req, res) {
     },
   })
 }
+
+export default requireAuth(handler)

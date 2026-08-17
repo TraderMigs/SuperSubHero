@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react'
+import React, { useState, useRef, useEffect } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import Home from './pages/Home.jsx'
 
@@ -47,6 +47,23 @@ export default function App() {
     }
   }
 
+  // The real gate is an HttpOnly cookie the server sets; this flag only avoids a flash of
+  // the password screen. If the cookie has expired, re-lock rather than show an app whose
+  // every request would fail. A network error is not treated as a lock-out.
+  useEffect(() => {
+    if (!unlocked) return
+    let cancelled = false
+    fetch('/api/check-password', { method: 'GET', credentials: 'same-origin' })
+      .then(resp => {
+        if (cancelled || resp.status !== 401) return
+        sessionStorage.removeItem(SESSION_KEY)
+        setUnlocked(false)
+        setError('Your session expired. Enter the password again.')
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [])
+
   const handleSubmit = async () => {
     if (!password.trim()) return
     setLoading(true)
@@ -55,14 +72,20 @@ export default function App() {
       const resp = await fetch('/api/check-password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
         body: JSON.stringify({ password }),
       })
-      const data = await resp.json()
-      if (data.success) {
+      let data = {}
+      try { data = await resp.json() } catch { /* keep the generic message below */ }
+      if (resp.ok && data.success) {
         sessionStorage.setItem(SESSION_KEY, 'yes')
+        setPassword('')
+        setShowPassword(false)
         setUnlocked(true)
-      } else {
+      } else if (resp.status === 401) {
         setError('Wrong password.')
+      } else {
+        setError(data.error || 'Something went wrong. Try again.')
       }
     } catch {
       setError('Something went wrong. Try again.')
