@@ -11,7 +11,17 @@ import { requireAuth } from './_auth.js'
 const DEFAULT_MODEL = process.env.OPENAI_MODEL || 'gpt-4.1-mini'
 const FALLBACK_MODEL = 'gpt-4o-mini'
 const MAX_RETRY_BLOCKS = 200
+// Retries go out in small batches: a sentence split across cues has far less room to be merged
+// into one when only a handful of blocks are in front of the model at once.
+const RETRY_BATCH_SIZE = 8
 
+// Each returned block echoes the first words of the block it claims to be translating.
+//
+// Without it, a whole class of failure passes silently. A sentence often runs across two cues;
+// the model translates it as one sentence, returns one block where two were asked for, and every
+// later block in the chunk carries the line before it. The numbering still looks perfect. In a
+// real 1,322-line film this put the wrong Thai line on roughly forty cues. The echo makes the
+// mistake checkable, so those blocks can be asked for again.
 const RESPONSE_FORMAT = {
   type: 'json_schema',
   json_schema: {
@@ -26,9 +36,10 @@ const RESPONSE_FORMAT = {
             type: 'object',
             properties: {
               n: { type: 'integer' },
+              echo: { type: 'string', description: 'The first few words of the SOURCE block, copied exactly, untranslated.' },
               text: { type: 'string' },
             },
-            required: ['n', 'text'],
+            required: ['n', 'echo', 'text'],
             additionalProperties: false,
           },
         },
@@ -37,6 +48,20 @@ const RESPONSE_FORMAT = {
       additionalProperties: false,
     },
   },
+}
+
+// Compare an echoed opening against the source block it claims to come from. Deliberately
+// forgiving: it only has to prove which block was being translated, not be a perfect copy.
+const wordsOf = s => String(s || '').toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(Boolean)
+
+// Exported for tests; Vercel only ever calls the default export.
+export function echoMatches(echo, sourceText) {
+  const want = wordsOf(sourceText)
+  const got = wordsOf(echo)
+  if (want.length < 2) return true // symbols, numbers or a single word prove nothing either way
+  if (got.length < 1) return false
+  const need = Math.min(2, want.length)
+  return want.slice(0, need).every((w, i) => got[i] === w)
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms))
@@ -103,7 +128,9 @@ async function translateWithFallback(args) {
   }
 }
 
-function parseBlocksFromCompletion(data) {
+// Returns { map, rejected }: translations keyed by block number, and the numbers whose echo
+// showed they were translating a different block than they claimed.
+export function parseBlocksFromCompletion(data, blocks) {
   const choice = data?.choices?.[0]
   const content = choice?.message?.content
   if (!content) throw new Error('OpenAI returned an empty reply')
@@ -114,13 +141,18 @@ function parseBlocksFromCompletion(data) {
     if (choice?.finish_reason === 'length') throw new Error('Reply was cut off (too long for one request)')
     throw new Error('OpenAI reply was not valid JSON')
   }
+
   const map = {}
+  const rejected = []
   for (const b of parsed?.blocks || []) {
     const n = Number(b?.n)
     const text = typeof b?.text === 'string' ? b.text.trim() : ''
-    if (Number.isInteger(n) && text) map[n] = text
+    if (!Number.isInteger(n) || !text) continue
+    const source = blocks && blocks[n - 1]
+    if (source && !echoMatches(b?.echo, source.text)) { rejected.push(n); continue }
+    map[n] = text
   }
-  return map
+  return { map, rejected }
 }
 
 function buildSystemPrompt({ targetLanguage, count, title, contextBefore }) {
@@ -129,11 +161,15 @@ function buildSystemPrompt({ targetLanguage, count, title, contextBefore }) {
     '',
     'RULES',
     `1. Return JSON with a "blocks" array holding exactly ${count} items, one per input block, using the same "n" numbers.`,
-    '2. Translate every block completely into the target language: dialogue, sound cues in brackets, on-screen text, song lyrics. Never leave a block in the source language.',
-    '3. Keep the line breaks of the original block (use \\n where the original breaks a line). Keep music symbols (♪ ♩ ♫ ♬) as they are.',
-    '4. Keep names as names; write them the way the target language normally writes foreign names.',
-    '5. Match the tone: casual stays casual, formal stays formal. Be consistent with how characters address each other across all blocks.',
-    '6. Keep each block short enough to read on screen: prefer natural, compact phrasing over literal length.',
+    '2. For each block set "echo" to the first three or four words of that block\'s SOURCE text, copied exactly and left untranslated. It is a check that each translation is attached to the right block.',
+    // The failure this prevents: one sentence spread over two cues, translated as a single
+    // sentence, so every later block in the batch carries the line before it.
+    '3. A sentence is often split across two or three blocks. Translate the part that belongs to each block and leave the split exactly where it is. Never merge blocks together, never move wording from one block into another, and never leave a block empty because you already said it in a previous block.',
+    '4. Translate every block completely into the target language: dialogue, sound cues in brackets, on-screen text, song lyrics. Never leave a block in the source language.',
+    '5. Keep the line breaks of the original block (use \\n where the original breaks a line). Keep music symbols (♪ ♩ ♫ ♬) as they are.',
+    '6. Keep names as names; write them the way the target language normally writes foreign names.',
+    '7. Match the tone: casual stays casual, formal stays formal. Be consistent with how characters address each other across all blocks.',
+    '8. Keep each block short enough to read on screen: prefer natural, compact phrasing over literal length.',
   ]
   if (title) lines.push('', `The film or episode is: ${title}.`)
   if (contextBefore) {
@@ -185,27 +221,41 @@ async function handler(req, res) {
       ],
       maxOutputTokens: 16000,
     })
-    const translationMap = parseBlocksFromCompletion(first.data)
+    const firstPass = parseBlocksFromCompletion(first.data, blocks)
+    const translationMap = firstPass.map
     let modelUsed = first.model
+    let misaligned = firstPass.rejected.length
 
-    // Targeted retry for anything the model skipped.
+    // Blocks the model skipped, plus blocks whose echo showed they were translating something
+    // else. Both are re-requested in small batches, where a sentence spanning cues has far less
+    // room to be merged than in a batch of eighty.
     let missing = allIndices.filter(i => !translationMap[i + 1])
     if (missing.length > 0 && missing.length <= MAX_RETRY_BLOCKS) {
-      try {
-        const retry = await translateWithFallback({
-          apiKey: OPENAI_API_KEY,
-          messages: [
-            { role: 'system', content: buildSystemPrompt({ targetLanguage, count: missing.length, title: safeTitle, contextBefore: '' }) },
-            { role: 'user', content: formatBatch(blocks, missing) },
-          ],
-          maxOutputTokens: 8000,
-        })
-        Object.assign(translationMap, parseBlocksFromCompletion(retry.data))
-        modelUsed = retry.model
-      } catch (e) {
-        console.error('Retry for missing blocks failed:', e.message)
+      const batches = []
+      for (let i = 0; i < missing.length; i += RETRY_BATCH_SIZE) batches.push(missing.slice(i, i + RETRY_BATCH_SIZE))
+      for (const batch of batches) {
+        try {
+          const retry = await translateWithFallback({
+            apiKey: OPENAI_API_KEY,
+            messages: [
+              { role: 'system', content: buildSystemPrompt({ targetLanguage, count: batch.length, title: safeTitle, contextBefore: '' }) },
+              { role: 'user', content: formatBatch(blocks, batch) },
+            ],
+            maxOutputTokens: 4000,
+          })
+          const again = parseBlocksFromCompletion(retry.data, blocks)
+          Object.assign(translationMap, again.map)
+          misaligned += again.rejected.length
+          modelUsed = retry.model
+        } catch (e) {
+          console.error('Retry for missing blocks failed:', e.message)
+        }
       }
       missing = allIndices.filter(i => !translationMap[i + 1])
+    }
+
+    if (misaligned) {
+      console.log(`Rejected ${misaligned} block(s) whose echo did not match their source; ${missing.length} still untranslated after retries.`)
     }
 
     const result = blocks.map((orig, i) => {
@@ -218,6 +268,7 @@ async function handler(req, res) {
       blocksTranslated: blocks.length - missing.length,
       missingCount: missing.length,
       missing: missing.map(i => i + 1),
+      misalignedCount: misaligned,
       model: modelUsed,
     })
   } catch (err) {
