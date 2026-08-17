@@ -3,11 +3,15 @@ import { LANGUAGES, SEARCH_LANGUAGES } from '../lib/languages.js'
 import { parseSrt, buildSrt, mergeSrts, mergeSrtsDetailed, downloadFile, applyOffset } from '../lib/srt.js'
 import { renderSubtitleOverlay, overlayRenderKey, fullscreenPaddingBottom } from '../lib/subOverlay.js'
 
-const PREVIEW_LINES = [
-  { en: "I'll be back.", th: 'ฉันจะกลับมา' },
-  { en: "May the Force be with you.", th: 'ขอให้พลังสถิตกับเจ้า' },
-  { en: "Why so serious?", th: 'ทำไมต้องจริงจังนัก?' },
-]
+// Shown in the Preview box only until real subtitle lines are loaded.
+const PREVIEW_SAMPLE = 'May the Force be with you.'
+
+// Trim a subtitle line to something that fits the small preview box.
+function previewText(value, fallback = '') {
+  const line = String(value || '').split('\n').find(l => l.trim()) || ''
+  if (!line) return fallback
+  return line.length > 60 ? line.slice(0, 57).trimEnd() + '...' : line
+}
 
 const TRANSLATE_CHUNK_SIZE = 80
 const TRANSLATE_CONCURRENCY = 6
@@ -474,8 +478,6 @@ export default function Home() {
   const blocksL1Ref = useRef([])
   const blocksL2Ref = useRef([])
 
-  const [previewStyle] = useState('transparent')
-  const previewLine = PREVIEW_LINES[1]
 
   const handleSearch = async () => {
     if (!query.trim()) return
@@ -1057,7 +1059,9 @@ export default function Home() {
                 <div className="result-title">{r.title}</div>
                 <div className="result-meta">{r.year || '—'} · {r.type === 'tv' ? 'TV Series' : 'Movie'}</div>
               </div>
-              <div className="result-badge">{r.imdb_id || r.tmdb_id || ''}</div>
+              <div className="result-badge" title={r.providers ? `Found on: ${r.providers.join(', ')}` : ''}>
+                {r.providers ? r.providers.map(p => p === 'opensubtitles' ? 'OS' : p === 'subsource' ? 'SS' : 'SDL').join(' · ') : (r.imdb_id || r.tmdb_id || '')}
+              </div>
             </div>
           ))}
         </div>
@@ -1187,9 +1191,13 @@ export default function Home() {
             <div className="divider" />
 
             <div className="ctrl-label">Preview</div>
-            <div className={`preview-box ${previewStyle === 'black' ? 'bg-black' : 'bg-transparent'}`}>
-              <div className="preview-line">{previewLine.en}</div>
-              {lang2 && <div className="preview-line lang2">{previewLine.th}</div>}
+            <div className="preview-box bg-transparent">
+              <div className="preview-line">{previewText(blocksL1[0]?.text, PREVIEW_SAMPLE)}</div>
+              {lang2 && (
+                <div className="preview-line lang2">
+                  {previewText(blocksL2[0]?.text, `Your ${lang2Label} line appears here`)}
+                </div>
+              )}
             </div>
 
             <div className="divider" />
@@ -1225,7 +1233,7 @@ export default function Home() {
               <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6, lineHeight: 1.5 }}>
                 {mergeInfo.mode === 'index'
                   ? 'Both tracks share the same timing: merged line by line.'
-                  : `Different timing on the two tracks: lines are paired by time overlap. ${mergeInfo.matched} of ${blocksL1.length} ${lang1Label} lines found a ${lang2Label} match; ${mergeInfo.unmatchedSecond} ${lang2Label}-only lines are kept on their own.`}
+                  : `Different timing on the two tracks: lines are paired by time overlap. ${mergeInfo.matched} of ${blocksL1.length} ${lang1Label} lines found a ${lang2Label} match; ${mergeInfo.unmatchedSecond} ${lang2Label}-only ${mergeInfo.unmatchedSecond === 1 ? 'line is' : 'lines are'} kept on their own.`}
               </div>
             )}
 
