@@ -211,7 +211,7 @@ function missingNote(missingCount, total) {
   return ` · ${missingCount.toLocaleString()} of ${total.toLocaleString()} lines could not be translated and were kept as they were`
 }
 
-function CollapsiblePanel({ title, langLabel, blocks, loading, translating, error, onBlockChange, emptyIcon, emptyText, emptySubText, translateSource, progress }) {
+function CollapsiblePanel({ title, langLabel, blocks, loading, translating, error, onBlockChange, emptyIcon, emptyText, emptySubText, translateSource, progress, warning }) {
   const [open, setOpen] = useState(false)
   const hasContent = blocks.length > 0
   const isActive = loading || translating
@@ -251,6 +251,17 @@ function CollapsiblePanel({ title, langLabel, blocks, loading, translating, erro
       )}
       {error && error !== 'not_found' && !hasContent && (
         <div className="status-bar error" style={{ margin: '0 16px 16px' }}>{error}</div>
+      )}
+
+      {/* Repeated here as well as in the controls: this panel is where the text is actually
+          read, and reading it is the moment you would otherwise notice nothing is wrong. */}
+      {warning && (
+        <div style={{ margin: '0 16px 16px' }}>
+          <div style={{ padding: '8px 10px', borderRadius: 8, fontSize: 11, lineHeight: 1.5, border: '1px solid var(--error)', background: 'rgba(241,53,74,0.1)', color: 'var(--error)' }}>
+            <div style={{ fontWeight: 600 }}>Wrong language</div>
+            <div style={{ marginTop: 2 }}>{warning}</div>
+          </div>
+        </div>
       )}
 
       {hasContent && open && (
@@ -1277,6 +1288,7 @@ export default function Home() {
             onBlockChange={updateBlockL1}
             translateSource={translateSourceL1}
             progress={translateProgressL1}
+            warning={langWarnL1}
             emptyIcon="📄"
             emptyText="Subtitle text will appear here"
             emptySubText="Select a subtitle from Controls"
@@ -1487,6 +1499,7 @@ export default function Home() {
             onBlockChange={updateBlockL2}
             translateSource={translateSourceL2}
             progress={translateProgressL2}
+            warning={langWarnL2}
             emptyIcon="🌍"
             emptyText={lang2 ? 'Second subtitle will appear here' : 'Select a second language'}
             emptySubText={lang2 ? `Find and select a ${lang2Label} release` : 'Optional — for dual-language SRT'}
