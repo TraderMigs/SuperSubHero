@@ -8,7 +8,86 @@ const PREVIEW_LINES = [
   { en: "Why so serious?", th: 'ทำไมต้องจริงจังนัก?' },
 ]
 
-function CollapsiblePanel({ title, langLabel, blocks, loading, translating, error, onBlockChange, emptyIcon, emptyText, emptySubText, translateSource }) {
+const TRANSLATE_CHUNK_SIZE = 80
+const TRANSLATE_CONCURRENCY = 6
+const TRANSLATE_HINT = 'A full movie takes about 1-2 minutes.'
+
+async function translateOneChunk(chunk, prevChunk, targetLang, title) {
+  const resp = await fetch('/api/translate-srt', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      srtContent: buildSrt(chunk),
+      targetLanguage: targetLang,
+      // The last few lines before this chunk, so tone and names stay consistent across chunks.
+      contextBefore: prevChunk ? prevChunk.slice(-4).map(b => b.text).join('\n') : '',
+      title: title || '',
+    }),
+  })
+  let data
+  try {
+    data = await resp.json()
+  } catch {
+    throw new Error(`The translation service gave an unreadable reply (HTTP ${resp.status})`)
+  }
+  if (!resp.ok || data.error) throw new Error(data.error || `Translation failed (HTTP ${resp.status})`)
+  const parsed = parseSrt(data.content)
+  return {
+    blocks: chunk.map((orig, i) => ({ ...orig, text: parsed[i]?.text || orig.text })),
+    missingCount: Number(data.missingCount) || 0,
+  }
+}
+
+// Translate all blocks in chunks, a few at a time. A chunk that fails twice keeps its
+// original text and is counted as missing, so one bad request cannot throw the whole
+// job away. Returns the assembled blocks plus what could not be translated.
+async function translateBlocksInChunks(allBlocks, targetLang, { title = '', onProgress } = {}) {
+  const chunks = []
+  for (let i = 0; i < allBlocks.length; i += TRANSLATE_CHUNK_SIZE) chunks.push(allBlocks.slice(i, i + TRANSLATE_CHUNK_SIZE))
+  const results = new Array(chunks.length)
+  let done = 0, missingCount = 0, failedChunks = 0, lastError = null, next = 0
+  const report = () => onProgress && onProgress(`Translated ${done} of ${chunks.length} parts`)
+  report()
+
+  const worker = async () => {
+    while (next < chunks.length) {
+      const idx = next++
+      const chunk = chunks[idx]
+      const prev = idx > 0 ? chunks[idx - 1] : null
+      let result = null
+      for (let attempt = 0; attempt < 2 && !result; attempt++) {
+        try {
+          result = await translateOneChunk(chunk, prev, targetLang, title)
+        } catch (e) {
+          lastError = e
+        }
+      }
+      if (result) {
+        results[idx] = result.blocks
+        missingCount += result.missingCount
+      } else {
+        results[idx] = chunk.map(b => ({ ...b }))
+        missingCount += chunk.length
+        failedChunks++
+      }
+      done++
+      report()
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(TRANSLATE_CONCURRENCY, chunks.length) }, worker))
+
+  if (chunks.length && failedChunks === chunks.length) {
+    throw new Error(lastError?.message || 'Translation failed')
+  }
+  return { blocks: results.flat(), missingCount, failedChunks, total: allBlocks.length }
+}
+
+function missingNote(missingCount, total) {
+  if (!missingCount) return ''
+  return ` · ${missingCount.toLocaleString()} of ${total.toLocaleString()} lines could not be translated and were kept as they were`
+}
+
+function CollapsiblePanel({ title, langLabel, blocks, loading, translating, error, onBlockChange, emptyIcon, emptyText, emptySubText, translateSource, progress }) {
   const [open, setOpen] = useState(false)
   const hasContent = blocks.length > 0
   const isActive = loading || translating
@@ -42,7 +121,8 @@ function CollapsiblePanel({ title, langLabel, blocks, loading, translating, erro
         <div className="panel-empty">
           <div className="spinner" style={{ width: 24, height: 24, borderWidth: 3 }} />
           <div>{translating ? `Translating to ${langLabel}...` : 'Loading subtitle...'}</div>
-          {translating && <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>This takes ~30 seconds for a full movie</div>}
+          {translating && progress && <div style={{ fontSize: 12, color: 'var(--accent2)', marginTop: 4 }}>{progress}</div>}
+          {translating && <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>{TRANSLATE_HINT}</div>}
         </div>
       )}
       {error && error !== 'not_found' && !hasContent && (
@@ -112,10 +192,10 @@ function SubPanel({ blocks, label, translating, translateSource, error, onBlockC
     <div className="upload-sub-panel">
       <div className="panel-empty" style={{ padding: '1.5rem' }}>
         <div className="spinner" style={{ width: 24, height: 24, borderWidth: 3 }} />
-        <div style={{ fontWeight: 500, marginTop: 8 }}>AI is processing magic...brb</div>
+        <div style={{ fontWeight: 500, marginTop: 8 }}>Translating with AI...</div>
         <div style={{ fontSize: 12, color: 'var(--accent)', marginTop: 6, fontFamily: 'monospace' }}>⏱ {fmt(elapsed)}</div>
         {progress && <div style={{ fontSize: 12, color: 'var(--accent2)', marginTop: 4 }}>{progress}</div>}
-        <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>Large files may take 3–8 mins</div>
+        <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>{TRANSLATE_HINT}</div>
       </div>
     </div>
   )
@@ -348,6 +428,8 @@ export default function Home() {
   const [autoTranslatingL2, setAutoTranslatingL2] = useState(false)
   const [translateSourceL1, setTranslateSourceL1] = useState('')
   const [translateSourceL2, setTranslateSourceL2] = useState('')
+  const [translateProgressL1, setTranslateProgressL1] = useState('')
+  const [translateProgressL2, setTranslateProgressL2] = useState('')
 
   // Upload & Translate mode
   const [pageMode, setPageMode] = useState('search') // 'search' | 'upload'
@@ -510,19 +592,20 @@ export default function Home() {
       setLoading(false)
     }
   }
-  const translateFallback = async (targetLangCode, setBlocks, setError, setTranslating, setTranslateSource, sourceBlocks = null) => {
+  const translateFallback = async (targetLangCode, setBlocks, setError, setTranslating, setTranslateSource, sourceBlocks = null, setProgress = null) => {
     setTranslating(true)
     setError('')
     setBlocks([])
+    if (setProgress) setProgress('')
     try {
       const targetLang = LANGUAGES.find(l => l.code === targetLangCode)?.label || targetLangCode
-      const CHUNK_SIZE = 80
       let allBlocks = []
+      let sourceLabel = ''
 
       // Smart source selection: use other window's blocks if available, otherwise fetch English
       if (sourceBlocks && sourceBlocks.length > 0) {
         allBlocks = sourceBlocks
-        if (setTranslateSource) setTranslateSource(`Translated from: other panel`)
+        sourceLabel = 'Translated from: other panel'
       } else {
         const params = buildTitleParams('EN')
 
@@ -559,42 +642,28 @@ export default function Home() {
         }
 
         if (!englishContent) throw new Error(lastDownloadError)
-        if (setTranslateSource && usedCandidate) {
+        if (usedCandidate) {
           const epLabel = usedCandidate.episode > 0 ? ` · E${usedCandidate.episode}` : ''
-          setTranslateSource(`Translated from: English${epLabel} (${usedCandidate.source})`)
+          sourceLabel = `Translated from: English${epLabel} (${usedCandidate.source})`
         }
         allBlocks = parseSrt(englishContent)
       }
 
       if (!allBlocks.length) throw new Error('Could not parse source subtitle')
+      if (setTranslateSource) setTranslateSource(sourceLabel)
 
-      const chunks = []
-      for (let i = 0; i < allBlocks.length; i += CHUNK_SIZE) {
-        chunks.push(allBlocks.slice(i, i + CHUNK_SIZE))
-      }
-
-      const chunkResults = await Promise.all(chunks.map(async (chunk) => {
-        const chunkSrt = buildSrt(chunk)
-        const translateResp = await fetch('/api/translate-srt', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ srtContent: chunkSrt, targetLanguage: targetLang, targetLanguageCode: targetLangCode }),
-        })
-        const translateData = await translateResp.json()
-        if (translateData.error) throw new Error(translateData.error)
-        const parsed = parseSrt(translateData.content)
-        return chunk.map((orig, i) => ({
-          ...orig,
-          text: parsed[i]?.text || orig.text
-        }))
-      }))
-      const allTranslated = chunkResults.flat()
+      const { blocks: allTranslated, missingCount, total } = await translateBlocksInChunks(allBlocks, targetLang, {
+        title: selectedTitle?.title || '',
+        onProgress: setProgress || undefined,
+      })
       if (!allTranslated.length) throw new Error('Translation produced empty result')
       setBlocks(allTranslated)
+      if (setTranslateSource) setTranslateSource(`${sourceLabel}${missingNote(missingCount, total)}`)
     } catch (err) {
       setError(err.message)
     } finally {
       setTranslating(false)
+      if (setProgress) setProgress('')
     }
   }
 
@@ -794,46 +863,28 @@ export default function Home() {
     reader.readAsText(file)
   }
 
-  const handleUploadTranslate = async (blocks, targetLangCode, setTranslating, setTranslatedBlocks, setError, setTranslateSource, setProgress) => {
+  const handleUploadTranslate = async (blocks, targetLangCode, setTranslating, setTranslatedBlocks, setError, setTranslateSource, setProgress, fileName = '') => {
     if (!blocks.length) return
     setTranslating(true)
     setError('')
     setTranslatedBlocks([])
     if (setProgress) setProgress('')
-    const CHUNK_SIZE = 80
     try {
       const targetLang = LANGUAGES.find(l => l.code === targetLangCode)?.label || targetLangCode
-      // Split blocks into chunks
-      const chunks = []
-      for (let i = 0; i < blocks.length; i += CHUNK_SIZE) {
-        chunks.push(blocks.slice(i, i + CHUNK_SIZE))
-      }
-      if (setProgress) setProgress(`Translating ${chunks.length} chunks in parallel...`)
-      const chunkResults = await Promise.all(chunks.map(async (chunk) => {
-        const chunkSrt = buildSrt(chunk)
-        const resp = await fetch('/api/translate-srt', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ srtContent: chunkSrt, targetLanguage: targetLang, targetLanguageCode: targetLangCode }),
-        })
-        const data = await resp.json()
-        if (data.error) throw new Error(data.error)
-        const parsed = parseSrt(data.content)
-        return chunk.map((orig, i) => ({
-          ...orig,
-          text: parsed[i]?.text || orig.text
-        }))
-      }))
-      const allTranslated = chunkResults.flat()
+      // The file name usually carries the title (Inception.2010.1080p...), which helps the model with names and tone.
+      const title = (fileName || '').replace(/\.(srt|ass|vtt)$/i, '').replace(/[._]+/g, ' ').trim()
+      const { blocks: allTranslated, missingCount, total } = await translateBlocksInChunks(blocks, targetLang, {
+        title,
+        onProgress: setProgress || undefined,
+      })
       if (!allTranslated.length) throw new Error('Translation produced empty result')
       setTranslatedBlocks(allTranslated)
-      setTranslateSource(`Translated to: ${targetLang} via AI`)
-      if (setProgress) setProgress('')
+      setTranslateSource(`Translated to: ${targetLang} via AI${missingNote(missingCount, total)}`)
     } catch (err) {
       setError(err.message)
-      if (setProgress) setProgress('')
     } finally {
       setTranslating(false)
+      if (setProgress) setProgress('')
     }
   }
 
@@ -876,7 +927,7 @@ export default function Home() {
   useEffect(() => {
     if (errorL2 === 'not_found' && !blocksL2.length && !translatingL2 && !autoTranslatingL2 && blocksL1.length > 0 && lang2) {
       setAutoTranslatingL2(true)
-      translateFallback(lang2, setBlocksL2, setErrorL2, setTranslatingL2, setTranslateSourceL2, blocksL1)
+      translateFallback(lang2, setBlocksL2, setErrorL2, setTranslatingL2, setTranslateSourceL2, blocksL1, setTranslateProgressL2)
         .finally(() => setAutoTranslatingL2(false))
     }
   }, [errorL2, blocksL1.length, lang2])
@@ -884,7 +935,7 @@ export default function Home() {
   useEffect(() => {
     if (errorL1 === 'not_found' && !blocksL1.length && !translatingL1 && !autoTranslatingL1 && blocksL2.length > 0) {
       setAutoTranslatingL1(true)
-      translateFallback(lang1, setBlocksL1, setErrorL1, setTranslatingL1, setTranslateSourceL1, blocksL2)
+      translateFallback(lang1, setBlocksL1, setErrorL1, setTranslatingL1, setTranslateSourceL1, blocksL2, setTranslateProgressL1)
         .finally(() => setAutoTranslatingL1(false))
     }
   }, [errorL1, blocksL2.length])
@@ -940,8 +991,8 @@ export default function Home() {
           uploadProgress2={uploadProgress2}
           onUpload={(file) => handleUploadSrt(file, setUploadedBlocks, setUploadFileName)}
           onUpload2={(file) => handleUploadSrt(file, setUploadedBlocks2, setUploadFileName2)}
-          onTranslate={() => handleUploadTranslate(uploadedBlocks, uploadTargetLang, setUploadTranslating, setUploadTranslatedBlocks, setUploadError, setUploadTranslateSource, setUploadProgress)}
-          onTranslate2={() => handleUploadTranslate(uploadedBlocks2, uploadTargetLang2, setUploadTranslating2, setUploadTranslatedBlocks2, setUploadError2, setUploadTranslateSource2, setUploadProgress2)}
+          onTranslate={() => handleUploadTranslate(uploadedBlocks, uploadTargetLang, setUploadTranslating, setUploadTranslatedBlocks, setUploadError, setUploadTranslateSource, setUploadProgress, uploadFileName)}
+          onTranslate2={() => handleUploadTranslate(uploadedBlocks2, uploadTargetLang2, setUploadTranslating2, setUploadTranslatedBlocks2, setUploadError2, setUploadTranslateSource2, setUploadProgress2, uploadFileName2)}
           onDownloadOriginal={() => handleUploadDownloadSingle(uploadedBlocks, 'original', uploadFileName)}
           onDownloadTranslated={() => handleUploadDownloadSingle(uploadTranslatedBlocks, uploadTargetLang, uploadFileName, uploadOffsetMs)}
           onDownloadMerged={() => handleUploadDownloadMerged(uploadedBlocks, uploadTranslatedBlocks, uploadTargetLang, uploadFileName, uploadOffsetMs)}
@@ -1041,6 +1092,7 @@ export default function Home() {
             error={errorL1}
             onBlockChange={updateBlockL1}
             translateSource={translateSourceL1}
+            progress={translateProgressL1}
             emptyIcon="📄"
             emptyText="Subtitle text will appear here"
             emptySubText="Select a subtitle from Controls"
@@ -1061,7 +1113,7 @@ export default function Home() {
             {errorL1 === 'not_found' && !blocksL1.length && !translatingL1 && !autoTranslatingL1 && (
               <div className="ai-fallback-box">
                 <div className="ai-fallback-text">No {lang1Label} subtitles found.</div>
-                <button className="fetch-btn ai-btn" onClick={() => translateFallback(lang1, setBlocksL1, setErrorL1, setTranslatingL1, setTranslateSourceL1, blocksL2.length > 0 ? blocksL2 : null)}>
+                <button className="fetch-btn ai-btn" onClick={() => translateFallback(lang1, setBlocksL1, setErrorL1, setTranslatingL1, setTranslateSourceL1, blocksL2.length > 0 ? blocksL2 : null, setTranslateProgressL1)}>
                   ✨ AI Translate
                 </button>
               </div>
@@ -1105,7 +1157,7 @@ export default function Home() {
                 {errorL2 === 'not_found' && !blocksL2.length && !translatingL2 && !autoTranslatingL2 && (
                   <div className="ai-fallback-box">
                     <div className="ai-fallback-text">No {lang2Label} subtitles found.</div>
-                    <button className="fetch-btn ai-btn" onClick={() => translateFallback(lang2, setBlocksL2, setErrorL2, setTranslatingL2, setTranslateSourceL2, blocksL1.length > 0 ? blocksL1 : null)}>
+                    <button className="fetch-btn ai-btn" onClick={() => translateFallback(lang2, setBlocksL2, setErrorL2, setTranslatingL2, setTranslateSourceL2, blocksL1.length > 0 ? blocksL1 : null, setTranslateProgressL2)}>
                       ✨ AI Translate
                     </button>
                   </div>
@@ -1217,6 +1269,7 @@ export default function Home() {
             error={errorL2}
             onBlockChange={updateBlockL2}
             translateSource={translateSourceL2}
+            progress={translateProgressL2}
             emptyIcon="🌍"
             emptyText={lang2 ? 'Second subtitle will appear here' : 'Select a second language'}
             emptySubText={lang2 ? `Find and select a ${lang2Label} release` : 'Optional — for dual-language SRT'}

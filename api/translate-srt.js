@@ -1,15 +1,161 @@
+// Translates one chunk of SRT (the page sends 80-cue chunks) with OpenAI.
+//
+// Model: OPENAI_MODEL env var, default gpt-4.1-mini. If that model is not available to the
+// key, gpt-4o-mini is tried once as a fallback. Output is requested as strict JSON
+// ({ blocks: [{ n, text }] }) so block numbering cannot drift; anything still missing gets
+// one targeted retry, and whatever is left keeps the original text and is counted in
+// missingCount so the page can tell the user.
+
+const DEFAULT_MODEL = process.env.OPENAI_MODEL || 'gpt-4.1-mini'
+const FALLBACK_MODEL = 'gpt-4o-mini'
+const MAX_RETRY_BLOCKS = 200
+
+const RESPONSE_FORMAT = {
+  type: 'json_schema',
+  json_schema: {
+    name: 'subtitle_translation',
+    strict: true,
+    schema: {
+      type: 'object',
+      properties: {
+        blocks: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              n: { type: 'integer' },
+              text: { type: 'string' },
+            },
+            required: ['n', 'text'],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ['blocks'],
+      additionalProperties: false,
+    },
+  },
+}
+
+const sleep = ms => new Promise(r => setTimeout(r, ms))
+
+function shortError(text) {
+  try {
+    const j = JSON.parse(text)
+    const msg = j?.error?.message || text
+    return String(msg).slice(0, 240)
+  } catch {
+    return String(text).slice(0, 240)
+  }
+}
+
+// One chat-completions call with retries on rate limits / server errors.
+// Throws an error with .code = 'model' when the model itself is rejected, so the caller can fall back.
+async function chatCompletion({ apiKey, model, messages, maxOutputTokens }) {
+  const supportsTemperature = !/^(gpt-5|o\d)/i.test(model)
+  const body = {
+    model,
+    messages,
+    response_format: RESPONSE_FORMAT,
+    max_completion_tokens: maxOutputTokens,
+  }
+  if (supportsTemperature) body.temperature = 0.1
+
+  let lastError = null
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const resp = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    if (resp.ok) return resp.json()
+
+    const text = await resp.text()
+    const status = resp.status
+    const modelProblem = status === 404 || (status === 400 && /model/i.test(text) && /(not found|does not exist|do not have access|not supported|unsupported)/i.test(text))
+    if (modelProblem) {
+      const e = new Error(`Model ${model} not available: ${shortError(text)}`)
+      e.code = 'model'
+      throw e
+    }
+    const quotaProblem = /insufficient_quota|credit_balance_exhausted|billing/i.test(text)
+    if ((status === 429 && !quotaProblem) || status >= 500) {
+      lastError = new Error(`OpenAI ${status}: ${shortError(text)}`)
+      await sleep(800 * Math.pow(2, attempt) + Math.floor(Math.random() * 300))
+      continue
+    }
+    throw new Error(`OpenAI ${status}: ${shortError(text)}`)
+  }
+  throw lastError || new Error('OpenAI request failed')
+}
+
+async function translateWithFallback(args) {
+  try {
+    return { data: await chatCompletion({ ...args, model: DEFAULT_MODEL }), model: DEFAULT_MODEL }
+  } catch (e) {
+    if (e.code === 'model' && DEFAULT_MODEL !== FALLBACK_MODEL) {
+      console.warn(`Falling back to ${FALLBACK_MODEL}: ${e.message}`)
+      return { data: await chatCompletion({ ...args, model: FALLBACK_MODEL }), model: FALLBACK_MODEL }
+    }
+    throw e
+  }
+}
+
+function parseBlocksFromCompletion(data) {
+  const choice = data?.choices?.[0]
+  const content = choice?.message?.content
+  if (!content) throw new Error('OpenAI returned an empty reply')
+  let parsed
+  try {
+    parsed = JSON.parse(content)
+  } catch {
+    if (choice?.finish_reason === 'length') throw new Error('Reply was cut off (too long for one request)')
+    throw new Error('OpenAI reply was not valid JSON')
+  }
+  const map = {}
+  for (const b of parsed?.blocks || []) {
+    const n = Number(b?.n)
+    const text = typeof b?.text === 'string' ? b.text.trim() : ''
+    if (Number.isInteger(n) && text) map[n] = text
+  }
+  return map
+}
+
+function buildSystemPrompt({ targetLanguage, count, title, contextBefore }) {
+  const lines = [
+    `You are a professional subtitle translator. Translate the numbered subtitle blocks into ${targetLanguage}.`,
+    '',
+    'RULES',
+    `1. Return JSON with a "blocks" array holding exactly ${count} items, one per input block, using the same "n" numbers.`,
+    '2. Translate every block completely into the target language: dialogue, sound cues in brackets, on-screen text, song lyrics. Never leave a block in the source language.',
+    '3. Keep the line breaks of the original block (use \\n where the original breaks a line). Keep music symbols (♪ ♩ ♫ ♬) as they are.',
+    '4. Keep names as names; write them the way the target language normally writes foreign names.',
+    '5. Match the tone: casual stays casual, formal stays formal. Be consistent with how characters address each other across all blocks.',
+    '6. Keep each block short enough to read on screen: prefer natural, compact phrasing over literal length.',
+  ]
+  if (title) lines.push('', `The film or episode is: ${title}.`)
+  if (contextBefore) {
+    lines.push('', 'For context only, these are the lines just before this batch. Do NOT translate or return them:', contextBefore)
+  }
+  return lines.join('\n')
+}
+
+function formatBatch(blocks, indices) {
+  return indices.map(i => `[${i + 1}]\n${blocks[i].text}`).join('\n\n')
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
 
-  const { srtContent, targetLanguage, targetLanguageCode } = req.body
+  const { srtContent, targetLanguage, contextBefore, title } = req.body || {}
   if (!srtContent || !targetLanguage) return res.status(400).json({ error: 'srtContent and targetLanguage required' })
 
   const OPENAI_API_KEY = process.env.OPENAI_API_KEY
-  const BLOCK_DELIMITER = '==='
+  if (!OPENAI_API_KEY) return res.status(500).json({ error: 'Translation is not configured on the server (missing OPENAI_API_KEY)' })
 
   try {
-    // Parse SRT into blocks — preserve multi-line text as single unit
-    const rawBlocks = srtContent.trim().replace(/\r\n/g, '\n').split(/\n\n+/)
+    // Parse SRT into blocks; multi-line text stays one unit.
+    const rawBlocks = String(srtContent).trim().replace(/\r\n/g, '\n').split(/\n\n+/)
     const blocks = rawBlocks.map(block => {
       const lines = block.trim().split('\n')
       const indexLine = lines[0]?.trim()
@@ -20,109 +166,46 @@ export default async function handler(req, res) {
 
     if (!blocks.length) throw new Error('No subtitle blocks found')
 
-    // Number each block explicitly so GPT can reference them
-    const numbered = blocks.map((b, i) => `[${i + 1}] ${b.text}`)
-    const batch = numbered.join(`\n${BLOCK_DELIMITER}\n`)
-
-    const systemPrompt = `You are an expert professional subtitle translator specializing in ${targetLanguage}.
-
-INPUT FORMAT: Each block starts with [N] where N is the block number, followed by the text to translate.
-OUTPUT FORMAT: Return each translated block starting with [N] separated by ${BLOCK_DELIMITER}
-
-STRICT RULES:
-1. Translate EVERY block. Every single one. No exceptions.
-2. Keep the [N] number prefix on each block exactly as given.
-3. Return EXACTLY ${blocks.length} blocks — same count as input.
-4. Preserve newlines within blocks if the original has them.
-5. Translate ALL content — dialogue, stage directions, sound cues, everything.
-6. NEVER leave any block in English. Every block must be in ${targetLanguage}.
-7. Symbols only (♪ ♩ ♫ ♬) — keep as-is.
-8. Proper nouns/names — transliterate into ${targetLanguage} script if applicable.
-
-SELF-CHECK: Count your output blocks. If count ≠ ${blocks.length}, find the missing ones and add them before returning.`
-
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${OPENAI_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: batch }
-        ],
-        temperature: 0.1,
-        max_tokens: 16000,
-      }),
+    const allIndices = blocks.map((_, i) => i)
+    const safeTitle = typeof title === 'string' ? title.slice(0, 200) : ''
+    const systemPrompt = buildSystemPrompt({
+      targetLanguage,
+      count: blocks.length,
+      title: safeTitle,
+      contextBefore: typeof contextBefore === 'string' ? contextBefore.slice(0, 1500) : '',
     })
 
-    if (!response.ok) {
-      const err = await response.text()
-      throw new Error(`OpenAI error: ${err}`)
-    }
-
-    const data = await response.json()
-    const translatedText = data.choices[0].message.content
-
-    // Parse numbered blocks from response
-    const rawTranslated = translatedText.split(BLOCK_DELIMITER).map(t => t.trim()).filter(t => t)
-    
-    // Build a map by block number — handles missing/reordered blocks
-    const translationMap = {}
-    for (const chunk of rawTranslated) {
-      const match = chunk.match(/^\[(\d+)\]\s*([\s\S]*)/)
-      if (match) {
-        const num = parseInt(match[1])
-        const text = match[2].trim()
-        translationMap[num] = text
-      }
-    }
-
-    // Rebuild SRT — use translation map by number, fall back to re-requesting missing ones
-    const missingIndices = []
-    blocks.forEach((_, i) => {
-      if (!translationMap[i + 1]) missingIndices.push(i)
+    const first = await translateWithFallback({
+      apiKey: OPENAI_API_KEY,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: formatBatch(blocks, allIndices) },
+      ],
+      maxOutputTokens: 16000,
     })
+    const translationMap = parseBlocksFromCompletion(first.data)
+    let modelUsed = first.model
 
-    // If we have missing blocks, do a targeted retry for just those blocks
-    if (missingIndices.length > 0 && missingIndices.length <= 10) {
-      const retryBatch = missingIndices
-        .map(i => `[${i + 1}] ${blocks[i].text}`)
-        .join(`\n${BLOCK_DELIMITER}\n`)
-
+    // Targeted retry for anything the model skipped.
+    let missing = allIndices.filter(i => !translationMap[i + 1])
+    if (missing.length > 0 && missing.length <= MAX_RETRY_BLOCKS) {
       try {
-        const retryResp = await fetch('https://api.openai.com/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${OPENAI_API_KEY}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: 'gpt-4o-mini',
-            messages: [
-              { role: 'system', content: `Translate each block into ${targetLanguage}. Keep [N] prefix. Separate blocks with ${BLOCK_DELIMITER}.` },
-              { role: 'user', content: retryBatch }
-            ],
-            temperature: 0.1,
-            max_tokens: 4000,
-          }),
+        const retry = await translateWithFallback({
+          apiKey: OPENAI_API_KEY,
+          messages: [
+            { role: 'system', content: buildSystemPrompt({ targetLanguage, count: missing.length, title: safeTitle, contextBefore: '' }) },
+            { role: 'user', content: formatBatch(blocks, missing) },
+          ],
+          maxOutputTokens: 8000,
         })
-        if (retryResp.ok) {
-          const retryData = await retryResp.json()
-          const retryText = retryData.choices[0].message.content
-          for (const chunk of retryText.split(BLOCK_DELIMITER).map(t => t.trim()).filter(t => t)) {
-            const match = chunk.match(/^\[(\d+)\]\s*([\s\S]*)/)
-            if (match) translationMap[parseInt(match[1])] = match[2].trim()
-          }
-        }
+        Object.assign(translationMap, parseBlocksFromCompletion(retry.data))
+        modelUsed = retry.model
       } catch (e) {
-        console.error('Retry failed:', e)
+        console.error('Retry for missing blocks failed:', e.message)
       }
+      missing = allIndices.filter(i => !translationMap[i + 1])
     }
 
-    // Rebuild SRT
     const result = blocks.map((orig, i) => {
       const translated = translationMap[i + 1] || orig.text
       return `${orig.index}\n${orig.time}\n${translated}`
@@ -130,10 +213,11 @@ SELF-CHECK: Count your output blocks. If count ≠ ${blocks.length}, find the mi
 
     return res.status(200).json({
       content: result,
-      blocksTranslated: blocks.length,
-      missingCount: missingIndices.length,
+      blocksTranslated: blocks.length - missing.length,
+      missingCount: missing.length,
+      missing: missing.map(i => i + 1),
+      model: modelUsed,
     })
-
   } catch (err) {
     console.error('Translation error:', err)
     return res.status(500).json({ error: err.message })
