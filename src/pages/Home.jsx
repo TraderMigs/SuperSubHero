@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { LANGUAGES, SEARCH_LANGUAGES } from '../lib/languages.js'
 import { parseSrt, buildSrt, mergeSrts, mergeSrtsDetailed, downloadFile, applyOffset } from '../lib/srt.js'
+import { renderSubtitleOverlay, overlayRenderKey, fullscreenPaddingBottom } from '../lib/subOverlay.js'
 
 const PREVIEW_LINES = [
   { en: "I'll be back.", th: 'ฉันจะกลับมา' },
@@ -776,6 +777,7 @@ export default function Home() {
     let lastSubText = ''
     let lastSubText2 = ''
     let lastLineIdx = -1
+    let lastOverlayKey = null
 
     const tick = () => {
       // Rebuild parsed cache only when blocks actually change
@@ -817,14 +819,7 @@ export default function Home() {
           overlay.style.top = '0'
           overlay.style.width = '100vw'
           overlay.style.height = '100vh'
-          overlay.style.paddingBottom = Math.max(60, window.innerHeight * 0.08) + 'px'
-          const fsSize = Math.max(22, window.innerHeight * 0.04) + 'px'
-          const subStyle = `background:rgba(0,0,0,0.85);color:#fff;font-family:'Instrument Sans',sans-serif;font-size:${fsSize};font-weight:500;padding:6px 18px;border-radius:4px;text-align:center;text-shadow:1px 1px 3px rgba(0,0,0,1);line-height:1.5;max-width:90%;display:inline-block`
-          const sub2Style = subStyle + ';color:#ffe066'
-          let html = ''
-          if (newSub1) newSub1.split('\n').forEach(line => { if (line.trim()) html += `<div style="${subStyle}">${line}</div>` })
-          if (newSub2) newSub2.split('\n').forEach(line => { if (line.trim()) html += `<div style="${sub2Style}">${line}</div>` })
-          overlay.innerHTML = html
+          overlay.style.paddingBottom = fullscreenPaddingBottom(window.innerHeight)
         } else {
           // Normal mode: track exact video element position
           const rect = video.getBoundingClientRect()
@@ -833,12 +828,15 @@ export default function Home() {
           overlay.style.width = rect.width + 'px'
           overlay.style.height = rect.height + 'px'
           overlay.style.paddingBottom = '52px'
-          const subStyle = `background:rgba(0,0,0,0.82);color:#fff;font-family:'Instrument Sans',sans-serif;font-size:18px;font-weight:500;padding:4px 14px;border-radius:4px;text-align:center;text-shadow:1px 1px 2px rgba(0,0,0,1);line-height:1.5;max-width:90%;display:inline-block`
-          const sub2Style = subStyle + ';color:#ffe066'
-          let html = ''
-          if (newSub1) newSub1.split('\n').forEach(line => { if (line.trim()) html += `<div style="${subStyle}">${line}</div>` })
-          if (newSub2) newSub2.split('\n').forEach(line => { if (line.trim()) html += `<div style="${sub2Style}">${line}</div>` })
-          overlay.innerHTML = html
+        }
+
+        // Subtitle text is third-party content, so it is rendered as text nodes, never as
+        // HTML. Rebuilt only when the visible text (or the fullscreen size) changes.
+        const draw = { primary: newSub1, secondary: newSub2, fullscreen: isFS, viewportHeight: window.innerHeight }
+        const key = overlayRenderKey(draw)
+        if (key !== lastOverlayKey) {
+          lastOverlayKey = key
+          renderSubtitleOverlay(overlay, draw)
         }
       }
 
