@@ -3,6 +3,7 @@ import { LANGUAGES, SEARCH_LANGUAGES } from '../lib/languages.js'
 import { parseSrt, buildSrt, mergeSrts, mergeSrtsDetailed, downloadFile, applyOffset, retimeBlocks } from '../lib/srt.js'
 import { renderSubtitleOverlay, overlayRenderKey, fullscreenPaddingBottom } from '../lib/subOverlay.js'
 import { analyzeAlignment, describeAlignment, isIdentityTransform } from '../lib/align.js'
+import { parseRelease, compareReleases, MATCH_COLORS } from '../lib/release.js'
 
 // Shown in the Preview box only until real subtitle lines are loaded.
 const PREVIEW_SAMPLE = 'May the Force be with you.'
@@ -12,6 +13,56 @@ function previewText(value, fallback = '') {
   const line = String(value || '').split('\n').find(l => l.trim()) || ''
   if (!line) return fallback
   return line.length > 60 ? line.slice(0, 57).trimEnd() + '...' : line
+}
+
+const PROVIDER_ABBR = { opensubtitles: 'OS', subsource: 'SS', subdl: 'SDL' }
+const RELEASES_SHOWN = 12
+
+// One release row, shared by both language panels so they cannot drift apart.
+// The badge compares this release against whatever is selected on the other side, which is what
+// tells you up front whether the two files will line up.
+function ReleaseRow({ sub, selected, comparedToName, onClick }) {
+  const info = React.useMemo(() => parseRelease(sub.name), [sub.name])
+  const match = React.useMemo(
+    () => (comparedToName ? compareReleases(comparedToName, info) : null),
+    [comparedToName, info]
+  )
+  const showBadge = match && match.level !== 'unsure'
+  const color = showBadge ? MATCH_COLORS[match.level] : null
+
+  return (
+    <div
+      className={`sub-result-item ${selected ? 'selected' : ''}`}
+      onClick={onClick}
+      style={{ position: 'relative' }}
+    >
+      {showBadge && (
+        <div
+          title={match.reason}
+          style={{
+            position: 'absolute', top: 6, right: 6, fontSize: 9, fontWeight: 700,
+            letterSpacing: '0.04em', textTransform: 'uppercase', padding: '2px 6px',
+            borderRadius: 4, color: color.fg, background: color.bg, whiteSpace: 'nowrap',
+          }}
+        >
+          {match.label}
+        </div>
+      )}
+      <div className="sub-result-name" title={sub.name} style={{ paddingRight: showBadge ? 60 : 0 }}>
+        {sub.name}
+      </div>
+      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 3 }}>
+        {sub.episode > 0 && <div className="sub-result-meta">E{sub.episode}</div>}
+        {sub.full_season && <div className="sub-result-meta" style={{ color: 'var(--muted)' }}>Full season</div>}
+        {info.chips.length > 0
+          ? info.chips.map(chip => <div key={chip} className="sub-result-meta">{chip}</div>)
+          : <div className="sub-result-meta" style={{ opacity: 0.6 }}>Unknown source</div>}
+        <div className="sub-result-meta" style={{ opacity: 0.6, fontSize: 10, textTransform: 'uppercase' }}>
+          {PROVIDER_ABBR[sub.source] || sub.source}
+        </div>
+      </div>
+    </div>
+  )
 }
 
 const TRANSLATE_CHUNK_SIZE = 80
@@ -1176,17 +1227,16 @@ export default function Home() {
                 <div className="ctrl-label">Pick a release</div>
                 {subResultsL1
                   .filter(s => !episode || !s.episode || s.episode === parseInt(episode) || s.full_season)
-                  .slice(0, 8)
+                  .slice(0, RELEASES_SHOWN)
                   .map((s, i) => (
-                  <div key={i} className={`sub-result-item ${selectedSubL1?.id === s.id ? 'selected' : ''}`} onClick={() => { setSelectedSubL1(s); loadSubContent(s, setLoadingL1, setBlocksL1, setErrorL1, subResultsL1) }}>
-                    <div className="sub-result-name" title={s.name} style={{ whiteSpace: "normal", wordBreak: "break-word" }}>{s.name}</div>
-                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 2 }}>
-                      {s.episode > 0 && <div className="sub-result-meta">E{s.episode}</div>}
-                      {(s.full_season) && <div className="sub-result-meta" style={{ color: 'var(--muted)' }}>Full</div>}
-                      <div className="sub-result-meta" style={{ opacity: 0.6, fontSize: 10, textTransform: 'uppercase' }}>{s.source === 'opensubtitles' ? 'OS' : s.source === 'subsource' ? 'SS' : 'SDL'}</div>
-                    </div>
-                  </div>
-                ))}
+                    <ReleaseRow
+                      key={s.id || i}
+                      sub={s}
+                      selected={selectedSubL1?.id === s.id}
+                      comparedToName={selectedSubL2?.name}
+                      onClick={() => { setSelectedSubL1(s); loadSubContent(s, setLoadingL1, setBlocksL1, setErrorL1, subResultsL1) }}
+                    />
+                  ))}
               </div>
             )}
 
@@ -1220,17 +1270,16 @@ export default function Home() {
                     <div className="ctrl-label">Pick a release</div>
                     {subResultsL2
                       .filter(s => !episode || !s.episode || s.episode === parseInt(episode) || s.full_season)
-                      .slice(0, 8)
+                      .slice(0, RELEASES_SHOWN)
                       .map((s, i) => (
-                      <div key={i} className={`sub-result-item ${selectedSubL2?.id === s.id ? 'selected' : ''}`} onClick={() => { setSelectedSubL2(s); loadSubContent(s, setLoadingL2, setBlocksL2, setErrorL2, subResultsL2) }}>
-                        <div className="sub-result-name" title={s.name} style={{ whiteSpace: "normal", wordBreak: "break-word" }}>{s.name}</div>
-                        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 2 }}>
-                          {s.episode > 0 && <div className="sub-result-meta">E{s.episode}</div>}
-                          {(s.full_season) && <div className="sub-result-meta" style={{ color: 'var(--muted)' }}>Full</div>}
-                          <div className="sub-result-meta" style={{ opacity: 0.6, fontSize: 10, textTransform: 'uppercase' }}>{s.source === 'opensubtitles' ? 'OS' : s.source === 'subsource' ? 'SS' : 'SDL'}</div>
-                        </div>
-                      </div>
-                    ))}
+                        <ReleaseRow
+                          key={s.id || i}
+                          sub={s}
+                          selected={selectedSubL2?.id === s.id}
+                          comparedToName={selectedSubL1?.name}
+                          onClick={() => { setSelectedSubL2(s); loadSubContent(s, setLoadingL2, setBlocksL2, setErrorL2, subResultsL2) }}
+                        />
+                      ))}
                   </div>
                 )}
               </>

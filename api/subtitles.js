@@ -33,26 +33,42 @@ function normalizeName(name = '') {
     .trim()
 }
 
-function sortCandidates(subtitles, episode) {
+// Order within one provider: an exact episode match first, whole-season files last.
+function sortWithinProvider(subtitles, episode) {
   const episodeNum = episode ? parseInt(episode, 10) : null
-
-  return subtitles.sort((a, b) => {
+  return subtitles.slice().sort((a, b) => {
     const aExact = episodeNum ? a.episode === episodeNum : false
     const bExact = episodeNum ? b.episode === episodeNum : false
     const aFull = !!(a.full_season || a.episode === 0)
     const bFull = !!(b.full_season || b.episode === 0)
-    // Priority: subdl=0, subsource=1, opensubtitles=2
-    const providerRank = { subdl: 0, subsource: 1, opensubtitles: 2 }
-    const aProvider = providerRank[a.source] ?? 1
-    const bProvider = providerRank[b.source] ?? 1
-
     if (aExact && !bExact) return -1
     if (!aExact && bExact) return 1
     if (aFull && !bFull) return 1
     if (!aFull && bFull) return -1
-    if (aProvider !== bProvider) return aProvider - bProvider
     return (a.name || '').localeCompare(b.name || '')
   })
+}
+
+// Interleave the providers, best-first from each in turn.
+//
+// This used to sort SubDL ahead of everything, and the page then showed only the first eight
+// rows, so OpenSubtitles and SubSource releases were invisible whenever SubDL had eight of its
+// own. For one film SubDL had 30 and OpenSubtitles 50, and none of the 50 could be reached.
+function interleaveProviders(subtitles, episode) {
+  const order = ['subdl', 'opensubtitles', 'subsource']
+  const queues = order.map(name => sortWithinProvider(subtitles.filter(s => s.source === name), episode))
+  const others = sortWithinProvider(subtitles.filter(s => !order.includes(s.source)), episode)
+  if (others.length) queues.push(others)
+
+  const out = []
+  for (let round = 0; out.length < subtitles.length; round++) {
+    let addedThisRound = false
+    for (const q of queues) {
+      if (round < q.length) { out.push(q[round]); addedThisRound = true }
+    }
+    if (!addedThisRound) break
+  }
+  return out
 }
 
 async function fetchFromSubDL(params, SUBDL_KEY) {
@@ -247,7 +263,7 @@ function mergeResults(subdlSubs, openSubs, ssSubs, episode) {
     combined.push(sub)
   }
 
-  return sortCandidates(combined, episode)
+  return interleaveProviders(combined, episode)
     .map(({ normalized_name, ...rest }) => rest)
     .slice(0, 40)
 }
@@ -287,6 +303,15 @@ async function handler(req, res) {
   const openSubs = openResult.status === 'fulfilled' ? openResult.value : []
   const ssSubs = ssResult.status === 'fulfilled' ? ssResult.value : []
   const subtitles = mergeResults(subdlSubs, openSubs, ssSubs, episode)
+
+  // Logged so the listing step is checkable from the Vercel logs, the way search already is.
+  const shown = subtitles.reduce((acc, s) => ({ ...acc, [s.source]: (acc[s.source] || 0) + 1 }), {})
+  const epLabel = type === 'tv' ? ` S${season || '?'}E${episode || '?'}` : ''
+  console.log(
+    `Subtitle list ${language}${epLabel} (${title || imdb_id || sd_id || tmdb_id}): ` +
+    `found subdl=${subdlSubs.length} opensubtitles=${openSubs.length} subsource=${ssSubs.length} -> ` +
+    `returned ${subtitles.length} (subdl=${shown.subdl || 0} opensubtitles=${shown.opensubtitles || 0} subsource=${shown.subsource || 0})`
+  )
 
   return res.status(200).json({
     subtitles,
