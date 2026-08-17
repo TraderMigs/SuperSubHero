@@ -1,6 +1,6 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react'
+import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { LANGUAGES, SEARCH_LANGUAGES } from '../lib/languages.js'
-import { parseSrt, buildSrt, mergeSrts, downloadFile, applyOffset } from '../lib/srt.js'
+import { parseSrt, buildSrt, mergeSrts, mergeSrtsDetailed, downloadFile, applyOffset } from '../lib/srt.js'
 
 const PREVIEW_LINES = [
   { en: "I'll be back.", th: 'ฉันจะกลับมา' },
@@ -893,6 +893,13 @@ export default function Home() {
   const lang2Label = lang2 ? (LANGUAGES.find(l => l.code === lang2)?.label || lang2) : null
   const hasDual = lang2 && blocksL2.length > 0
 
+  // How the two tracks will be merged: line by line when they share a timeline (one is a
+  // translation of the other), by time overlap when they are two different files.
+  const mergeInfo = useMemo(
+    () => (hasDual && blocksL1.length ? mergeSrtsDetailed(blocksL1, blocksL2) : null),
+    [hasDual, blocksL1, blocksL2]
+  )
+
   return (
     <div>
       {/* NAV */}
@@ -1164,6 +1171,13 @@ export default function Home() {
             <button className="dl-btn secondary" onClick={handleDownloadMerged} disabled={!hasDual}>
               ↓ Download Merged ({lang2 ? `${lang1} + ${lang2}` : 'select 2nd lang'})
             </button>
+            {mergeInfo && (
+              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6, lineHeight: 1.5 }}>
+                {mergeInfo.mode === 'index'
+                  ? 'Both tracks share the same timing: merged line by line.'
+                  : `Different timing on the two tracks: lines are paired by time overlap. ${mergeInfo.matched} of ${blocksL1.length} ${lang1Label} lines found a ${lang2Label} match; ${mergeInfo.unmatchedSecond} ${lang2Label}-only lines are kept on their own.`}
+              </div>
+            )}
 
 
             {/* VPN AFFILIATES */}
