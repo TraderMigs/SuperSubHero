@@ -1,7 +1,8 @@
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { LANGUAGES, SEARCH_LANGUAGES } from '../lib/languages.js'
-import { parseSrt, buildSrt, mergeSrts, mergeSrtsDetailed, downloadFile, applyOffset } from '../lib/srt.js'
+import { parseSrt, buildSrt, mergeSrts, mergeSrtsDetailed, downloadFile, applyOffset, retimeBlocks } from '../lib/srt.js'
 import { renderSubtitleOverlay, overlayRenderKey, fullscreenPaddingBottom } from '../lib/subOverlay.js'
+import { analyzeAlignment, describeAlignment, isIdentityTransform } from '../lib/align.js'
 
 // Shown in the Preview box only until real subtitle lines are loaded.
 const PREVIEW_SAMPLE = 'May the Force be with you.'
@@ -458,22 +459,27 @@ export default function Home() {
   const [uploadTranslateSource2, setUploadTranslateSource2] = useState('')
 
   const [offsetMs, setOffsetMs] = useState(0)
+  // Extra nudge for the second track only. The single shared offset could never fix a second
+  // language that was out of step, because it moved both tracks by the same amount.
+  const [secondaryOffsetMs, setSecondaryOffsetMs] = useState(0)
+  const [autoAlign, setAutoAlign] = useState(true)
+  const [alignment, setAlignment] = useState(null)
+  const [aligning, setAligning] = useState(false)
 
   const [videoFile, setVideoFile] = useState(null)
   const [videoUrl, setVideoUrl] = useState(null)
   const [videoDragging, setVideoDragging] = useState(false)
   const [videoSpeed, setVideoSpeed] = useState(1)
-  const [liveOffset, setLiveOffset] = useState(0)
   const [currentSubText, setCurrentSubText] = useState('')
   const [currentSubText2, setCurrentSubText2] = useState('')
   const [currentLineIndex, setCurrentLineIndex] = useState(-1)
+  const [currentLineIndex2, setCurrentLineIndex2] = useState(-1)
   const videoRef = useRef(null)
   const containerRef = useRef(null)
   const animFrameRef = useRef(null)
   const fsOverlayRef = useRef(null)
   const [isFullscreen, setIsFullscreen] = useState(false)
   // Live refs — updated every render, read inside rAF without stale closures
-  const liveOffsetRef = useRef(0)
   const offsetMsRef = useRef(0)
   const blocksL1Ref = useRef([])
   const blocksL2Ref = useRef([])
@@ -727,11 +733,41 @@ export default function Home() {
     }
   }, [])
 
+  // Measure how the two tracks line up. Sweeping a feature-length pair takes up to a second,
+  // so it runs after a paint rather than during render, and the panel says it is working.
+  // Declared before the ref-sync effects below, which depend on the aligned track.
+  useEffect(() => {
+    if (!blocksL1.length || !blocksL2.length) { setAlignment(null); setAligning(false); return }
+    setAligning(true)
+    let cancelled = false
+    const id = setTimeout(() => {
+      let result = null
+      try {
+        result = analyzeAlignment(blocksL1, blocksL2)
+      } catch (err) {
+        console.error('Alignment check failed:', err)
+      }
+      if (!cancelled) { setAlignment(result); setAligning(false) }
+    }, 30)
+    return () => { cancelled = true; clearTimeout(id) }
+  }, [blocksL1, blocksL2])
+
+  // The second track as it will actually be used: auto-aligned when that helps, plus any
+  // manual nudge. Everything downstream (merge, downloads, the video overlay) reads this, so
+  // what you see in the player is what lands in the file.
+  const alignedL2 = useMemo(() => {
+    let out = blocksL2
+    if (autoAlign && alignment && !isIdentityTransform(alignment.transform) && alignment.verdict !== 'incompatible') {
+      out = retimeBlocks(out, alignment.transform)
+    }
+    if (secondaryOffsetMs) out = applyOffset(out, secondaryOffsetMs)
+    return out
+  }, [blocksL2, autoAlign, alignment, secondaryOffsetMs])
+
   // Keep live refs in sync with state so the single rAF loop always has fresh values
-  useEffect(() => { liveOffsetRef.current = liveOffset }, [liveOffset])
   useEffect(() => { offsetMsRef.current = offsetMs }, [offsetMs])
   useEffect(() => { blocksL1Ref.current = blocksL1 }, [blocksL1])
-  useEffect(() => { blocksL2Ref.current = blocksL2 }, [blocksL2])
+  useEffect(() => { blocksL2Ref.current = alignedL2 }, [alignedL2])
 
 
   // ── Create subtitle portal overlay on mount (once) ──
@@ -779,6 +815,7 @@ export default function Home() {
     let lastSubText = ''
     let lastSubText2 = ''
     let lastLineIdx = -1
+    let lastLineIdx2 = -1
     let lastOverlayKey = null
 
     const tick = () => {
@@ -790,12 +827,13 @@ export default function Home() {
 
       // ── 1. Subtitle matching (uses refs — no stale closures, no re-mount on slider) ──
       const t = video.currentTime * 1000
-      const offset = offsetMsRef.current + liveOffsetRef.current
+      const offset = offsetMsRef.current
       const adjustedT = t - offset
 
       const matchIdx = parsed1.findIndex(b => adjustedT >= b.start && adjustedT <= b.end)
       const match1 = matchIdx >= 0 ? parsed1[matchIdx] : null
-      const match2 = parsed2.length > 0 ? parsed2.find(b => adjustedT >= b.start && adjustedT <= b.end) : null
+      const matchIdx2 = parsed2.length > 0 ? parsed2.findIndex(b => adjustedT >= b.start && adjustedT <= b.end) : -1
+      const match2 = matchIdx2 >= 0 ? parsed2[matchIdx2] : null
 
       const newSub1 = match1 ? match1.text : ''
       const newSub2 = match2 ? match2.text : ''
@@ -804,6 +842,7 @@ export default function Home() {
       if (newSub1 !== lastSubText) { lastSubText = newSub1; setCurrentSubText(newSub1) }
       if (newSub2 !== lastSubText2) { lastSubText2 = newSub2; setCurrentSubText2(newSub2) }
       if (matchIdx !== lastLineIdx) { lastLineIdx = matchIdx; setCurrentLineIndex(matchIdx) }
+      if (matchIdx2 !== lastLineIdx2) { lastLineIdx2 = matchIdx2; setCurrentLineIndex2(matchIdx2) }
 
       // ── 2. Portal overlay position + subtitle render ──
       const overlay = fsOverlayRef.current
@@ -908,16 +947,20 @@ export default function Home() {
   const updateUploadBlock2 = useCallback((idx, val) => { setUploadedBlocks2(u => { const a = [...u]; a[idx] = { ...a[idx], text: val }; return a }) }, [])
   const updateUploadTranslatedBlock2 = useCallback((idx, val) => { setUploadTranslatedBlocks2(u => { const a = [...u]; a[idx] = { ...a[idx], text: val }; return a }) }, [])
 
+  // The player's Live Sync used to be display-only: whatever you lined up by eye was dropped
+  // when you downloaded. Both offsets now count, so the file matches what you watched.
+  const totalOffsetMs = offsetMs
+
   const handleDownloadSingle = () => {
     if (!blocksL1.length) return
-    const srt = buildSrt(applyOffset(blocksL1, offsetMs))
+    const srt = buildSrt(applyOffset(blocksL1, totalOffsetMs))
     const title = selectedTitle?.title?.replace(/[^a-z0-9]/gi, '_') || 'subtitles'
     downloadFile(srt, `${title}_${lang1}.srt`)
   }
 
   const handleDownloadMerged = () => {
-    if (!blocksL1.length || !blocksL2.length) return
-    const merged = mergeSrts(applyOffset(blocksL1, offsetMs), applyOffset(blocksL2, offsetMs))
+    if (!blocksL1.length || !alignedL2.length) return
+    const merged = mergeSrts(applyOffset(blocksL1, totalOffsetMs), applyOffset(alignedL2, totalOffsetMs))
     const srt = buildSrt(merged)
     const title = selectedTitle?.title?.replace(/[^a-z0-9]/gi, '_') || 'subtitles'
     downloadFile(srt, `${title}_${lang1}_${lang2}_merged.srt`)
@@ -947,8 +990,13 @@ export default function Home() {
   // How the two tracks will be merged: line by line when they share a timeline (one is a
   // translation of the other), by time overlap when they are two different files.
   const mergeInfo = useMemo(
-    () => (hasDual && blocksL1.length ? mergeSrtsDetailed(blocksL1, blocksL2) : null),
-    [hasDual, blocksL1, blocksL2]
+    () => (hasDual && blocksL1.length ? mergeSrtsDetailed(blocksL1, alignedL2) : null),
+    [hasDual, blocksL1, alignedL2]
+  )
+
+  const alignmentSummary = useMemo(
+    () => (alignment ? describeAlignment(alignment, { primaryLabel: lang1Label, secondaryLabel: lang2Label || 'second' }) : null),
+    [alignment, lang1Label, lang2Label]
   )
 
   return (
@@ -1229,12 +1277,57 @@ export default function Home() {
             <button className="dl-btn secondary" onClick={handleDownloadMerged} disabled={!hasDual}>
               ↓ Download Merged ({lang2 ? `${lang1} + ${lang2}` : 'select 2nd lang'})
             </button>
-            {mergeInfo && (
-              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6, lineHeight: 1.5 }}>
-                {mergeInfo.mode === 'index'
-                  ? 'Both tracks share the same timing: merged line by line.'
-                  : `Different timing on the two tracks: lines are paired by time overlap. ${mergeInfo.matched} of ${blocksL1.length} ${lang1Label} lines found a ${lang2Label} match; ${mergeInfo.unmatchedSecond} ${lang2Label}-only ${mergeInfo.unmatchedSecond === 1 ? 'line is' : 'lines are'} kept on their own.`}
+            {hasDual && aligning && (
+              <div style={{ fontSize: 11, color: 'var(--accent2)', marginTop: 6 }}>Checking how the two tracks line up...</div>
+            )}
+
+            {hasDual && !aligning && alignmentSummary && (
+              <div
+                style={{
+                  marginTop: 8, padding: '8px 10px', borderRadius: 8, lineHeight: 1.5, fontSize: 11,
+                  border: `1px solid ${alignmentSummary.tone === 'bad' ? 'var(--error)' : alignmentSummary.tone === 'warn' ? '#c8a135' : 'var(--border)'}`,
+                  background: alignmentSummary.tone === 'bad' ? 'rgba(241,53,74,0.08)' : 'transparent',
+                  color: alignmentSummary.tone === 'bad' ? 'var(--error)' : 'var(--muted)',
+                }}
+              >
+                <div style={{ fontWeight: 500, color: alignmentSummary.tone === 'bad' ? 'var(--error)' : 'var(--text)' }}>
+                  {alignmentSummary.headline}
+                </div>
+                {alignmentSummary.detail && <div style={{ marginTop: 3 }}>{alignmentSummary.detail}</div>}
+                {mergeInfo && alignment?.verdict === 'unknown' && (
+                  <div style={{ marginTop: 3 }}>
+                    {mergeInfo.matched} of {blocksL1.length} {lang1Label} lines were paired by time.
+                  </div>
+                )}
+                {mergeInfo && mergeInfo.unmatchedSecond > 0 && alignmentSummary.tone !== 'bad' && (
+                  <div style={{ marginTop: 3 }}>
+                    {mergeInfo.unmatchedSecond} {lang2Label}-only {mergeInfo.unmatchedSecond === 1 ? 'line is kept on its own' : 'lines are kept on their own'} so nothing is lost.
+                  </div>
+                )}
               </div>
+            )}
+
+            {hasDual && alignment && !isIdentityTransform(alignment.transform) && (
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, fontSize: 11, color: 'var(--muted)', cursor: 'pointer' }}>
+                <input type="checkbox" checked={autoAlign} onChange={e => setAutoAlign(e.target.checked)} />
+                Correct the {lang2Label} timing automatically
+              </label>
+            )}
+
+            {hasDual && (
+              <>
+                <div className="ctrl-label" style={{ marginTop: 12 }}>Nudge {lang2Label} only</div>
+                <div className="sync-wrap">
+                  <input type="range" min="-60000" max="60000" step="100" value={secondaryOffsetMs}
+                    onChange={e => setSecondaryOffsetMs(Number(e.target.value))} className="sync-slider" />
+                  <div className="sync-display">
+                    <button className="sync-reset" onClick={() => setSecondaryOffsetMs(0)} title="Reset">↺</button>
+                    <span className={`sync-value ${secondaryOffsetMs > 0 ? 'delay' : secondaryOffsetMs < 0 ? 'advance' : ''}`}>
+                      {secondaryOffsetMs === 0 ? 'No extra nudge' : `${secondaryOffsetMs > 0 ? '+' : ''}${(secondaryOffsetMs / 1000).toFixed(1)}s`}
+                    </span>
+                  </div>
+                </div>
+              </>
             )}
 
 
@@ -1269,7 +1362,7 @@ export default function Home() {
           <CollapsiblePanel
             title="Second Language"
             langLabel={lang2Label || ''}
-            blocks={blocksL2}
+            blocks={alignedL2}
             loading={loadingL2}
             translating={translatingL2}
             error={errorL2}
@@ -1329,7 +1422,8 @@ export default function Home() {
                 )}
                 {blocksL1.length > 0 && (
                   <div className="video-line-counter">
-                    {currentLineIndex >= 0 ? `Line ${currentLineIndex + 1} of ${blocksL1.length}` : `0 of ${blocksL1.length}`}
+                    {`${lang1} ${currentLineIndex >= 0 ? currentLineIndex + 1 : 0}/${blocksL1.length}`}
+                    {hasDual && ` · ${lang2} ${currentLineIndex2 >= 0 ? currentLineIndex2 + 1 : 0}/${alignedL2.length}`}
                   </div>
                 )}
                 <button
@@ -1355,11 +1449,14 @@ export default function Home() {
                   </div>
                 </div>
 
+                {/* One sync control, shared with the Controls panel and applied to downloads.
+                    There used to be two sliders that looked independent but were added together,
+                    and only one of them reached the downloaded file. */}
                 <div className="video-ctrl-group">
                   <div className="video-ctrl-label">
-                    Live Sync &nbsp;
-                    <span className={`sync-value ${liveOffset > 0 ? 'delay' : liveOffset < 0 ? 'advance' : ''}`}>
-                      {liveOffset === 0 ? 'No offset' : liveOffset > 0 ? `+${(liveOffset/1000).toFixed(1)}s` : `${(liveOffset/1000).toFixed(1)}s`}
+                    Sync both tracks &nbsp;
+                    <span className={`sync-value ${offsetMs > 0 ? 'delay' : offsetMs < 0 ? 'advance' : ''}`}>
+                      {offsetMs === 0 ? 'No offset' : `${offsetMs > 0 ? '+' : ''}${(offsetMs / 1000).toFixed(1)}s`}
                     </span>
                   </div>
                   <div className="video-sync-row">
@@ -1368,21 +1465,57 @@ export default function Home() {
                       min="-300000"
                       max="300000"
                       step="100"
-                      value={liveOffset}
-                      onChange={e => setLiveOffset(Number(e.target.value))}
+                      value={offsetMs}
+                      onChange={e => setOffsetMs(Number(e.target.value))}
                       className="sync-slider"
                     />
                     <input
                       type="number"
                       className="sync-input"
-                      value={(liveOffset/1000).toFixed(1)}
+                      value={(offsetMs / 1000).toFixed(1)}
                       step="0.1"
-                      onChange={e => setLiveOffset(Math.round(parseFloat(e.target.value || 0) * 1000))}
+                      onChange={e => setOffsetMs(Math.round(parseFloat(e.target.value || 0) * 1000))}
                     />
                     <span className="sync-unit">s</span>
-                    <button className="sync-reset" onClick={() => setLiveOffset(0)} title="Reset">↺</button>
+                    <button className="sync-reset" onClick={() => setOffsetMs(0)} title="Reset">↺</button>
                   </div>
                 </div>
+
+                {hasDual && (
+                  <div className="video-ctrl-group">
+                    <div className="video-ctrl-label">
+                      Nudge {lang2Label} only &nbsp;
+                      <span className={`sync-value ${secondaryOffsetMs > 0 ? 'delay' : secondaryOffsetMs < 0 ? 'advance' : ''}`}>
+                        {secondaryOffsetMs === 0 ? 'No nudge' : `${secondaryOffsetMs > 0 ? '+' : ''}${(secondaryOffsetMs / 1000).toFixed(1)}s`}
+                      </span>
+                    </div>
+                    <div className="video-sync-row">
+                      <input
+                        type="range"
+                        min="-60000"
+                        max="60000"
+                        step="100"
+                        value={secondaryOffsetMs}
+                        onChange={e => setSecondaryOffsetMs(Number(e.target.value))}
+                        className="sync-slider"
+                      />
+                      <input
+                        type="number"
+                        className="sync-input"
+                        value={(secondaryOffsetMs / 1000).toFixed(1)}
+                        step="0.1"
+                        onChange={e => setSecondaryOffsetMs(Math.round(parseFloat(e.target.value || 0) * 1000))}
+                      />
+                      <span className="sync-unit">s</span>
+                      <button className="sync-reset" onClick={() => setSecondaryOffsetMs(0)} title="Reset">↺</button>
+                    </div>
+                    {alignmentSummary && (
+                      <div style={{ fontSize: 11, marginTop: 4, color: alignmentSummary.tone === 'bad' ? 'var(--error)' : 'var(--muted)' }}>
+                        {alignmentSummary.headline}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 <button
                   className="video-change-btn"

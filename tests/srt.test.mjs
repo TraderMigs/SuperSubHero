@@ -65,6 +65,35 @@ check('reports how many matched', r.matched === 2, String(r.matched))
 check('reports the unmatched count', r.unmatchedSecond === 1, String(r.unmatchedSecond))
 check('output is ordered by start time', r.blocks.every((b, i) => i === 0 || tsToMs(b.start) >= tsToMs(r.blocks[i - 1].start)))
 
+console.log('\n-- merge: one secondary cue attaches to exactly one primary cue --')
+// A long primary cue spanning two short secondary cues, followed by another primary cue that
+// also touches the second one. The shared cue must not be printed twice: attaching it to every
+// overlapping primary cue is what repeated 83 lines in a real merge.
+const longPrimary = parseSrt(srtOf(
+  cue(1, '00:00:01,000', '00:00:06,000', 'One long English line'),
+  cue(2, '00:00:06,000', '00:00:09,000', 'Second English line'),
+))
+const twoShort = parseSrt(srtOf(
+  cue(1, '00:00:01,200', '00:00:03,000', 'ES first'),
+  cue(2, '00:00:05,000', '00:00:07,000', 'ES shared'),
+))
+r = mergeSrtsDetailed(longPrimary, twoShort)
+const allText = r.blocks.map(b => b.text).join('\n')
+check('the shared cue appears exactly once', (allText.match(/ES shared/g) || []).length === 1, JSON.stringify(allText))
+check('the first cue appears exactly once', (allText.match(/ES first/g) || []).length === 1)
+check('no primary text is lost', /One long English line/.test(allText) && /Second English line/.test(allText))
+// It should land on the cue it overlaps most: 'ES shared' runs 05.0-07.0, overlapping cue 1 by
+// 1.0s and cue 2 by 1.0s... make the winner unambiguous instead.
+const clear = mergeSrtsDetailed(
+  parseSrt(srtOf(cue(1, '00:00:01,000', '00:00:04,000', 'EN a'), cue(2, '00:00:04,000', '00:00:08,000', 'EN b'))),
+  parseSrt(srtOf(cue(1, '00:00:03,500', '00:00:07,500', 'ES x'))),
+)
+check('the cue lands on its best-overlapping partner', /EN b\nES x/.test(clear.blocks.map(b => b.text).join('|')), JSON.stringify(clear.blocks.map(b => b.text)))
+check('no line is duplicated across the whole output', (() => {
+  const joined = clear.blocks.map(b => b.text).join('\n')
+  return (joined.match(/ES x/g) || []).length === 1
+})())
+
 console.log('\n-- merge: barely-touching cues must not pair --')
 // Track 2 ends 100ms after track 1 starts: contact, but not the same line of dialogue.
 const grazing = parseSrt(srtOf(cue(1, '00:00:00,000', '00:00:01,100', 'ES unrelated')))

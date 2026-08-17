@@ -53,6 +53,15 @@ check('thai text intact', ov.children[2].textContent === 'บรรทัดไ�
 check('blank lines skipped', renderSubtitleOverlay(newOverlay(), { primary: 'a\n\n   \nb' }) === 2)
 check('empty input renders nothing', renderSubtitleOverlay(newOverlay(), { primary: '', secondary: '' }) === 0)
 
+console.log('\n-- line cap keeps the screen readable --')
+ov = newOverlay()
+n = renderSubtitleOverlay(ov, { primary: 'p1\np2\np3\np4', secondary: 's1\ns2\ns3' })
+check('caps at 2 lines per track', n === 4, `got ${n}`)
+check('keeps the first primary lines', ov.children[0].textContent === 'p1' && ov.children[1].textContent === 'p2')
+check('keeps the first secondary lines', ov.children[2].textContent === 's1' && ov.children[3].textContent === 's2')
+check('cap is adjustable', renderSubtitleOverlay(newOverlay(), { primary: 'a\nb\nc', maxLinesPerTrack: 3 }) === 3)
+check('a single line is unaffected', renderSubtitleOverlay(newOverlay(), { primary: 'just one' }) === 1)
+
 console.log('\n-- previous children are cleared, not appended to --')
 ov = newOverlay()
 renderSubtitleOverlay(ov, { primary: 'old line' })
