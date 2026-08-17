@@ -92,28 +92,33 @@ async function fetchOpenSubtitles(file_id, OS_KEY) {
 }
 
 async function fetchSubSource(ss_id, SS_KEY) {
-  // Step 1: Get subtitle detail to find the download file ID
-  const detailResp = await fetch(
-    `https://api.subsource.net/api/v1/subtitles/${ss_id}`,
-    { headers: { 'X-API-Key': SS_KEY, Accept: 'application/json' } }
-  )
-
-  if (!detailResp.ok) throw new Error(`SubSource detail failed: ${detailResp.status}`)
-
-  const detail = await detailResp.json()
-  const downloadId = detail?.data?.id || ss_id
-
-  // Step 2: Get download link
-  const dlResp = await fetch(
-    `https://api.subsource.net/api/v1/subtitles/${downloadId}/download`,
+  // SubSource official API: GET /api/v1/subtitles/{subtitleId}/download returns the file (usually a zip).
+  let dlResp = await fetch(
+    `https://api.subsource.net/api/v1/subtitles/${encodeURIComponent(ss_id)}/download`,
     { headers: { 'X-API-Key': SS_KEY, Accept: '*/*' } }
   )
 
   if (!dlResp.ok) throw new Error(`SubSource download failed: ${dlResp.status}`)
 
-  const buffer = await dlResp.arrayBuffer()
-  const bytes = new Uint8Array(buffer)
-  const contentType = (dlResp.headers.get('content-type') || '').toLowerCase()
+  let buffer = await dlResp.arrayBuffer()
+  let bytes = new Uint8Array(buffer)
+  let contentType = (dlResp.headers.get('content-type') || '').toLowerCase()
+
+  // If the endpoint answers with JSON, look for a link inside it and follow that.
+  if (contentType.includes('json')) {
+    let link = null
+    try {
+      const j = JSON.parse(new TextDecoder().decode(bytes))
+      link = j?.data?.link || j?.data?.url || j?.data?.downloadUrl || j?.link || j?.url || j?.downloadUrl || null
+    } catch { /* not JSON after all */ }
+    if (!link) throw new Error('SubSource returned no downloadable file')
+    dlResp = await fetch(link, { headers: { Accept: '*/*' } })
+    if (!dlResp.ok) throw new Error(`SubSource file link returned ${dlResp.status}`)
+    buffer = await dlResp.arrayBuffer()
+    bytes = new Uint8Array(buffer)
+    contentType = (dlResp.headers.get('content-type') || '').toLowerCase()
+  }
+
   const isZip = contentType.includes('zip') || (bytes.length >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4B)
 
   if (isZip) {

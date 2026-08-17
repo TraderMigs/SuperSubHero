@@ -434,19 +434,27 @@ export default function Home() {
     setErrorL2('')
   }
 
+  // Every identifier we have goes to the server: SubDL wants sd_id, OpenSubtitles wants
+  // imdb/tmdb, SubSource wants imdb or the title. Sending only one starves the others.
+  const buildTitleParams = (language) => {
+    const params = new URLSearchParams({ language, type: contentType })
+    if (selectedTitle.sd_id) params.append('sd_id', selectedTitle.sd_id)
+    if (selectedTitle.imdb_id) params.append('imdb_id', selectedTitle.imdb_id)
+    if (selectedTitle.tmdb_id) params.append('tmdb_id', selectedTitle.tmdb_id)
+    if (selectedTitle.title) params.append('title', selectedTitle.title)
+    if (selectedTitle.year) params.append('year', selectedTitle.year)
+    if (contentType === 'tv' && season) params.append('season', season)
+    if (contentType === 'tv' && episode) params.append('episode', episode)
+    return params
+  }
+
   const fetchSubtitleList = async (language, setResults, setFetching, setError) => {
     if (!selectedTitle) return
     setFetching(true)
     setError('')
     setResults([])
     try {
-      const params = new URLSearchParams({ language, type: contentType })
-      if (selectedTitle.sd_id) params.append('sd_id', selectedTitle.sd_id)
-      else if (selectedTitle.imdb_id) params.append('imdb_id', selectedTitle.imdb_id)
-      else if (selectedTitle.tmdb_id) params.append('tmdb_id', selectedTitle.tmdb_id)
-      if (selectedTitle.title) params.append('title', selectedTitle.title)
-      if (contentType === 'tv' && season) params.append('season', season)
-      if (contentType === 'tv' && episode) params.append('episode', episode)
+      const params = buildTitleParams(language)
       const resp = await fetch(`/api/subtitles?${params}`)
       const data = await resp.json()
       if (data.error) { setError('not_found'); return }
@@ -516,13 +524,7 @@ export default function Home() {
         allBlocks = sourceBlocks
         if (setTranslateSource) setTranslateSource(`Translated from: other panel`)
       } else {
-        const params = new URLSearchParams({ language: 'EN', type: contentType })
-        if (selectedTitle.sd_id) params.append('sd_id', selectedTitle.sd_id)
-        else if (selectedTitle.imdb_id) params.append('imdb_id', selectedTitle.imdb_id)
-        else if (selectedTitle.tmdb_id) params.append('tmdb_id', selectedTitle.tmdb_id)
-        if (selectedTitle.title) params.append('title', selectedTitle.title)
-        if (contentType === 'tv' && season) params.append('season', season)
-        if (contentType === 'tv' && episode) params.append('episode', episode)
+        const params = buildTitleParams('EN')
 
         const listResp = await fetch(`/api/subtitles?${params}`)
         const listData = await listResp.json()
