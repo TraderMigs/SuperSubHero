@@ -107,7 +107,8 @@ async function searchSubSource({ query, type, year, season }, key) {
 }
 
 // One result per title, carrying every ID any provider gave us for it.
-function mergeTitles(groups, wantedQuery) {
+// Exported for tests; Vercel only ever calls the default export.
+export function mergeTitles(groups, wantedQuery) {
   const byKey = new Map()
 
   const keysFor = r => {
