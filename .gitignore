@@ -1,0 +1,13 @@
+# dependencies and build output
+node_modules/
+dist/
+
+# local secrets and tool state
+.env
+.env.*
+.vercel/
+.claude/
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
