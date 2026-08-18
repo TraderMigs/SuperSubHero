@@ -155,6 +155,33 @@ export function parseBlocksFromCompletion(data, blocks) {
   return { map, rejected }
 }
 
+// A sentence spanning two cues sometimes comes back whole in the first block and correctly in
+// the second, so its tail shows twice: one cue displays a line that belongs to the next.
+//
+// Distinguishable from dialogue that genuinely repeats. Real repeats ("- Make way!" answered by
+// "- Make way!") have a source block with the same number of lines as its translation. This
+// artifact leaves the block with MORE lines than its source, and the surplus is exactly what the
+// following block already says.
+export function dropDuplicatedTails(blocks, map) {
+  let removed = 0
+  for (let i = 0; i + 1 < blocks.length; i++) {
+    const current = map[i + 1], next = map[i + 2]
+    if (!current || !next) continue
+    const currentLines = current.split('\n')
+    const sourceLines = String(blocks[i].text || '').split('\n')
+    if (currentLines.length <= sourceLines.length) continue
+
+    const nextLines = new Set(next.split('\n').map(l => l.trim()).filter(Boolean))
+    // Never touch the first line: whatever else is true, it belongs to this block.
+    const kept = currentLines.filter((line, idx) => !(idx > 0 && nextLines.has(line.trim())))
+    if (kept.length && kept.length < currentLines.length) {
+      removed += currentLines.length - kept.length
+      map[i + 1] = kept.join('\n')
+    }
+  }
+  return removed
+}
+
 function buildSystemPrompt({ targetLanguage, count, title, contextBefore }) {
   const lines = [
     `You are a professional subtitle translator. Translate the numbered subtitle blocks into ${targetLanguage}.`,
@@ -254,8 +281,10 @@ async function handler(req, res) {
       missing = allIndices.filter(i => !translationMap[i + 1])
     }
 
-    if (misaligned) {
-      console.log(`Rejected ${misaligned} block(s) whose echo did not match their source; ${missing.length} still untranslated after retries.`)
+    const duplicatedLines = dropDuplicatedTails(blocks, translationMap)
+
+    if (misaligned || duplicatedLines) {
+      console.log(`Rejected ${misaligned} block(s) whose echo did not match their source; trimmed ${duplicatedLines} duplicated line(s); ${missing.length} still untranslated after retries.`)
     }
 
     const result = blocks.map((orig, i) => {
@@ -269,6 +298,7 @@ async function handler(req, res) {
       missingCount: missing.length,
       missing: missing.map(i => i + 1),
       misalignedCount: misaligned,
+      duplicatedLines,
       model: modelUsed,
     })
   } catch (err) {

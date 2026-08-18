@@ -4,7 +4,7 @@
 // "in our line of work?", two cues carrying one sentence. It translated the sentence once,
 // returned one block where two were asked for, and every later block in that batch carried the
 // line before it. The numbering looked perfect throughout, so nothing noticed.
-import { echoMatches, parseBlocksFromCompletion } from '../api/translate-srt.js'
+import { echoMatches, parseBlocksFromCompletion, dropDuplicatedTails } from '../api/translate-srt.js'
 
 let pass = 0, fail = 0
 const check = (name, ok, detail = '') => { if (ok) { pass++; console.log(`  ok   ${name}`) } else { fail++; console.log(`  FAIL ${name} ${detail}`) } }
@@ -62,6 +62,44 @@ check('a cut-off reply says so', (() => {
   catch (e) { return /cut off/i.test(e.message) }
 })())
 check('parsing without the source list still works', Object.keys(parseBlocksFromCompletion(reply([{ n: 1, echo: 'whatever', text: 'hi' }]), null).map).length === 1)
+
+console.log('\n-- trimming a tail that belongs to the next cue --')
+// Taken from a real run: the sentence spans cues 275 and 276. The model translated it whole
+// into 275 and also correctly into 276, so the Thai half showed on screen twice.
+let src = [
+  { text: 'Who else would try to attack you' },
+  { text: 'in our line of work?' },
+]
+let map = { 1: 'แล้วใครอีกจะพยายามโจมตีคุณ\nในงานของเรา?', 2: 'ในงานของเรา?' }
+check('one duplicated line is removed', dropDuplicatedTails(src, map) === 1)
+check('the first cue keeps only its own half', map[1] === 'แล้วใครอีกจะพยายามโจมตีคุณ', JSON.stringify(map[1]))
+check('the second cue is untouched', map[2] === 'ในงานของเรา?')
+
+console.log('\n-- dialogue that genuinely repeats is left alone --')
+// Also real: "- Make way!" is answered by "- Make way!", and both source blocks have two lines.
+src = [
+  { text: '- One moment, please!\n- Make way!' },
+  { text: '- Let us through.\n- Make way!' },
+]
+map = { 1: '- รอสักครู่!\n- ทางหน่อย!', 2: '- ให้พวกเราผ่านหน่อย\n- ทางหน่อย!' }
+check('nothing is removed', dropDuplicatedTails(src, map) === 0)
+check('both cues keep both lines', map[1].split('\n').length === 2 && map[2].split('\n').length === 2)
+
+src = [{ text: 'HUR WAS KILLED WITH MY KNIFE\nBY SOMEONE ELSE' }, { text: 'HUR WAS KILLED WITH MY KNIFE' }]
+map = { 1: 'ฮอถูกฆ่าด้วยมีดของผม\nโดยคนอื่น', 2: 'ฮอถูกฆ่าด้วยมีดของผม' }
+check('a repeated sign card is left alone', dropDuplicatedTails(src, map) === 0)
+
+console.log('\n-- guards --')
+src = [{ text: 'one' }, { text: 'two' }]
+map = { 1: 'ONE', 2: 'TWO' }
+check('a clean pair is untouched', dropDuplicatedTails(src, map) === 0 && map[1] === 'ONE')
+map = { 1: 'SAME', 2: 'SAME' }
+check('a single line is never removed, even when identical', dropDuplicatedTails(src, map) === 0 && map[1] === 'SAME')
+map = { 1: 'A\nB\nB', 2: 'B' }
+check('several duplicated lines are all removed', dropDuplicatedTails([{ text: 'a' }, { text: 'b' }], map) === 2 && map[1] === 'A')
+check('a missing next block is skipped', dropDuplicatedTails(src, { 1: 'X\nY' }) === 0)
+check('an empty map does not throw', dropDuplicatedTails(src, {}) === 0)
+check('a source block with no text does not throw', dropDuplicatedTails([{ text: '' }, { text: 'b' }], { 1: 'A\nB', 2: 'B' }) >= 0)
 
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)
