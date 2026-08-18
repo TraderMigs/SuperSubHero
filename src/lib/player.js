@@ -16,13 +16,15 @@ export function clockTime(seconds) {
 
 // Did full screen actually fill the display?
 //
-// Chrome answers yes to requestFullscreen and applies its fullscreen styles even when it keeps
-// the element inside the page, which is what happens whenever something else shares the window.
-// Docked DevTools is the everyday cause. Nothing in the API reports the difference.
+// Chrome can answer yes to requestFullscreen and apply its fullscreen styles while the window
+// stays where it is, leaving the element the size of the page rather than the display. Nothing
+// in the API reports the difference, so the only way to know is to measure what arrived.
 //
-// The tell is the window. A window that really went full screen is exactly as tall as the
-// screen. Migs' case measured an outer height of 1192 against a screen height of 1235: still a
-// taskbar short, with the element sized to the page area at 2430x1333 rather than the display.
+// One reading of that state: outer height 1192 against a screen height of 1235, element sized
+// to the page area at 2430x1333. Docked DevTools was blamed for it here and that was wrong,
+// disproved by a screenshot of YouTube filling the same display with DevTools docked in the
+// same window. The cause is still unidentified. This function reports the measurement and
+// deliberately names no cause.
 //
 // The allowance matters more than the idea. A genuinely full screen Chrome window on Windows
 // does NOT report the screen's exact height, because Windows gives such a window an invisible
