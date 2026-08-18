@@ -31,6 +31,9 @@ check('a taskbar-height shortfall is called out', fullscreenIsReal({ outerHeight
 check('a window taller than the screen is fine', fullscreenIsReal({ outerHeight: 1080, screenHeight: 1032 }) === true)
 check('missing numbers never cry wolf', fullscreenIsReal({}) === true)
 check('a zero screen height never cries wolf', fullscreenIsReal({ outerHeight: 0, screenHeight: 0 }) === true)
+// Measured in a real Chrome tab that had not been fronted: outerWidth and outerHeight both 0.
+check('a window reporting zero height is not accused', fullscreenIsReal({ outerHeight: 0, screenHeight: 1235 }) === true)
+check('a negative height is not accused either', fullscreenIsReal({ outerHeight: -1, screenHeight: 1235 }) === true)
 
 console.log('\n-- where the subtitles sit --')
 // The case that was wrong on screen: a 940x400 film in a 952x535.5 frame, a 65px black band,

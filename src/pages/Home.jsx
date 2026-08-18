@@ -1000,9 +1000,9 @@ export default function Home() {
       const p = el.requestFullscreen
         ? el.requestFullscreen({ navigationUI: 'hide' })
         : (el.webkitRequestFullscreen && el.webkitRequestFullscreen())
-      if (p && p.catch) p.catch(err => setVideoNote(`This browser would not go full screen (${err?.name || 'refused'}). F11 makes the whole window full screen instead.`))
+      if (p && p.catch) p.catch(err => setVideoNote(`The browser turned down the full screen request (${err?.name || 'refused'}).`))
     } catch (err) {
-      setVideoNote(`This browser would not go full screen (${err?.name || 'refused'}). F11 makes the whole window full screen instead.`)
+      setVideoNote(`The browser turned down the full screen request (${err?.name || 'refused'}).`)
     }
   }
 
@@ -1013,10 +1013,13 @@ export default function Home() {
       setBarVisible(true)
       if (!el) return
       if (!fullscreenIsReal({ outerHeight: window.outerHeight, screenHeight: window.screen.height })) {
-        setVideoNote('Your browser kept full screen inside the window instead of filling the display. Docked DevTools is the usual cause, since Chrome will not take the window full screen while it is sharing it. Close DevTools, or undock it into its own window, and try again.')
+        // Say what was measured rather than name a cause. An earlier version blamed docked
+        // DevTools, and Migs disproved that in one screenshot: YouTube fills his display with
+        // DevTools docked in the same window.
+        setVideoNote(`Full screen did not fill the display. The window stayed ${Math.round(window.outerHeight)}px tall on a ${Math.round(window.screen.height)}px screen, so the picture is only as big as the page was.`)
       }
     }
-    const onError = () => setVideoNote('This browser refused full screen for this page. F11 makes the whole window full screen instead.')
+    const onError = () => setVideoNote('The browser turned down the full screen request for this page.')
     document.addEventListener('fullscreenchange', onChange)
     document.addEventListener('webkitfullscreenchange', onChange)
     document.addEventListener('fullscreenerror', onError)

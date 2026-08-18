@@ -26,8 +26,14 @@ export function clockTime(seconds) {
 //
 // The 8px allowance is for the odd rounding between device pixels and CSS pixels on a scaled
 // display, so a genuine full screen is never called a fake one.
+//
+// outerHeight is not always a number worth trusting: measured in a real Chrome tab that had not
+// been brought to the front, window.outerWidth and window.outerHeight both read 0. Treating that
+// as "the window is zero pixels tall" would accuse every such case of faking it, so anything at
+// or below zero means we do not know, and saying nothing beats crying wolf.
 export function fullscreenIsReal({ outerHeight, screenHeight, tolerance = 8 } = {}) {
-  if (!isFinite(outerHeight) || !isFinite(screenHeight) || screenHeight <= 0) return true
+  if (!isFinite(outerHeight) || !isFinite(screenHeight)) return true
+  if (outerHeight <= 0 || screenHeight <= 0) return true
   return outerHeight >= screenHeight - tolerance
 }
 
