@@ -1109,6 +1109,11 @@ h1, h2, h3, h4 {
   width: 86px;
 }
 
+/* The browser's own fullscreen button is hidden because it would fullscreen the video element
+   alone, and the subtitles are drawn in a layer outside it, so they would vanish. Two buttons
+   sat side by side and only one of them did anything. */
+video.video-el::-webkit-media-controls-fullscreen-button { display: none !important; }
+
 /* ── Custom fullscreen button ── */
 .video-fs-btn {
   position: absolute;
@@ -1124,22 +1129,26 @@ h1, h2, h3, h4 {
   z-index: 20;
   pointer-events: all;
   line-height: 1.4;
+  /* Fades with the player's own controls instead of sitting on the film the whole way through. */
+  opacity: 0;
+  transition: opacity 0.2s ease;
 }
-.video-fs-btn:hover { background: rgba(0,0,0,0.9); }
+.video-fs-btn.visible { opacity: 1; }
+.video-fs-btn:hover { background: rgba(0,0,0,0.9); opacity: 1; }
+.video-fs-btn:focus-visible { opacity: 1; outline: 2px solid var(--accent); }
 
 /* ── Container fullscreen layout ── */
+/* 100% rather than 100vw/100vh: the fullscreen element already fills the screen, while the
+   viewport units can disagree with it and push the picture off the edge. */
 .video-container:fullscreen,
 .video-container:-webkit-full-screen {
-  position: fixed !important;
-  inset: 0 !important;
-  width: 100vw !important;
-  height: 100vh !important;
-  max-width: 100vw !important;
+  width: 100% !important;
+  height: 100% !important;
+  max-width: none !important;
   background: #000 !important;
   border-radius: 0 !important;
   overflow: hidden !important;
   display: block !important;
-  z-index: 2147483647 !important;
 }
 
 /* Video fills the whole screen */
@@ -1149,7 +1158,7 @@ h1, h2, h3, h4 {
   inset: 0 !important;
   width: 100% !important;
   height: 100% !important;
-  max-height: 100vh !important;
+  max-height: none !important;
   object-fit: contain !important;
   z-index: 1 !important;
 }

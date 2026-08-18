@@ -5,6 +5,7 @@ import { renderSubtitleOverlay, overlayRenderKey, fullscreenPaddingBottom } from
 import { analyzeAlignment, describeAlignment, isIdentityTransform } from '../lib/align.js'
 import { parseRelease, compareReleases, MATCH_COLORS } from '../lib/release.js'
 import { verifyLanguage } from '../lib/language.js'
+import { loadSession, saveSession, clearSession, restored } from '../lib/session.js'
 
 // Shown in the Preview box only until real subtitle lines are loaded.
 const PREVIEW_SAMPLE = 'May the Force be with you.'
@@ -552,50 +553,56 @@ function UploadTranslateSection({
 }
 
 export default function Home() {
-  const [query, setQuery] = useState('')
-  const [year, setYear] = useState('')
-  const [contentType, setContentType] = useState('movie')
-  const [season, setSeason] = useState('')
-  const [episode, setEpisode] = useState('')
+  // Whatever was on screen before the last refresh. A reload used to discard the search, the
+  // chosen title, both subtitle tracks and any AI translation, which costs money to redo.
+  const saved = useRef(loadSession()).current
+  // True only on the load right after a refresh, so the video note is not shown forever.
+  const [restoredSession, setRestoredSession] = useState(() => Array.isArray(saved.blocksL1) && saved.blocksL1.length > 0)
+
+  const [query, setQuery] = useState(() => restored(saved, 'query', ''))
+  const [year, setYear] = useState(() => restored(saved, 'year', ''))
+  const [contentType, setContentType] = useState(() => restored(saved, 'contentType', 'movie'))
+  const [season, setSeason] = useState(() => restored(saved, 'season', ''))
+  const [episode, setEpisode] = useState(() => restored(saved, 'episode', ''))
 
   const [searching, setSearching] = useState(false)
-  const [searchResults, setSearchResults] = useState([])
-  const [selectedTitle, setSelectedTitle] = useState(null)
+  const [searchResults, setSearchResults] = useState(() => restored(saved, 'searchResults', []))
+  const [selectedTitle, setSelectedTitle] = useState(() => saved.selectedTitle || null)
 
-  const [lang1, setLang1] = useState('EN')
-  const [lang2, setLang2] = useState('')
+  const [lang1, setLang1] = useState(() => restored(saved, 'lang1', 'EN'))
+  const [lang2, setLang2] = useState(() => restored(saved, 'lang2', ''))
   // Per panel: download a file, or translate the other panel's track.
-  const [mode1, setMode1] = useState('find')
-  const [mode2, setMode2] = useState('find')
+  const [mode1, setMode1] = useState(() => restored(saved, 'mode1', 'find'))
+  const [mode2, setMode2] = useState(() => restored(saved, 'mode2', 'find'))
 
   const [fetchingL1, setFetchingL1] = useState(false)
   const [fetchingL2, setFetchingL2] = useState(false)
-  const [subResultsL1, setSubResultsL1] = useState([])
-  const [subResultsL2, setSubResultsL2] = useState([])
-  const [selectedSubL1, setSelectedSubL1] = useState(null)
-  const [selectedSubL2, setSelectedSubL2] = useState(null)
+  const [subResultsL1, setSubResultsL1] = useState(() => restored(saved, 'subResultsL1', []))
+  const [subResultsL2, setSubResultsL2] = useState(() => restored(saved, 'subResultsL2', []))
+  const [selectedSubL1, setSelectedSubL1] = useState(() => saved.selectedSubL1 || null)
+  const [selectedSubL2, setSelectedSubL2] = useState(() => saved.selectedSubL2 || null)
 
   const [loadingL1, setLoadingL1] = useState(false)
   const [loadingL2, setLoadingL2] = useState(false)
-  const [blocksL1, setBlocksL1] = useState([])
-  const [blocksL2, setBlocksL2] = useState([])
+  const [blocksL1, setBlocksL1] = useState(() => restored(saved, 'blocksL1', []))
+  const [blocksL2, setBlocksL2] = useState(() => restored(saved, 'blocksL2', []))
   const [errorL1, setErrorL1] = useState('')
   const [errorL2, setErrorL2] = useState('')
   // Set when a downloaded file turns out not to be in the language it was filed under.
-  const [langWarnL1, setLangWarnL1] = useState('')
-  const [langWarnL2, setLangWarnL2] = useState('')
+  const [langWarnL1, setLangWarnL1] = useState(() => restored(saved, 'langWarnL1', ''))
+  const [langWarnL2, setLangWarnL2] = useState(() => restored(saved, 'langWarnL2', ''))
 
   const [translatingL1, setTranslatingL1] = useState(false)
   const [translatingL2, setTranslatingL2] = useState(false)
   const [autoTranslatingL1, setAutoTranslatingL1] = useState(false)
   const [autoTranslatingL2, setAutoTranslatingL2] = useState(false)
-  const [translateSourceL1, setTranslateSourceL1] = useState('')
-  const [translateSourceL2, setTranslateSourceL2] = useState('')
+  const [translateSourceL1, setTranslateSourceL1] = useState(() => restored(saved, 'translateSourceL1', ''))
+  const [translateSourceL2, setTranslateSourceL2] = useState(() => restored(saved, 'translateSourceL2', ''))
   const [translateProgressL1, setTranslateProgressL1] = useState('')
   const [translateProgressL2, setTranslateProgressL2] = useState('')
 
   // Upload & Translate mode
-  const [pageMode, setPageMode] = useState('search') // 'search' | 'upload'
+  const [pageMode, setPageMode] = useState(() => restored(saved, 'pageMode', 'search')) // 'search' | 'upload'
   const [uploadedBlocks, setUploadedBlocks] = useState([])
   const [uploadedBlocks2, setUploadedBlocks2] = useState([])
   const [uploadFileName, setUploadFileName] = useState('')
@@ -615,11 +622,11 @@ export default function Home() {
   const [uploadTranslateSource, setUploadTranslateSource] = useState('')
   const [uploadTranslateSource2, setUploadTranslateSource2] = useState('')
 
-  const [offsetMs, setOffsetMs] = useState(0)
+  const [offsetMs, setOffsetMs] = useState(() => restored(saved, 'offsetMs', 0))
   // Extra nudge for the second track only. The single shared offset could never fix a second
   // language that was out of step, because it moved both tracks by the same amount.
-  const [secondaryOffsetMs, setSecondaryOffsetMs] = useState(0)
-  const [autoAlign, setAutoAlign] = useState(true)
+  const [secondaryOffsetMs, setSecondaryOffsetMs] = useState(() => restored(saved, 'secondaryOffsetMs', 0))
+  const [autoAlign, setAutoAlign] = useState(() => restored(saved, 'autoAlign', true))
   const [alignment, setAlignment] = useState(null)
   const [aligning, setAligning] = useState(false)
 
@@ -636,6 +643,8 @@ export default function Home() {
   const animFrameRef = useRef(null)
   const fsOverlayRef = useRef(null)
   const [isFullscreen, setIsFullscreen] = useState(false)
+  const [controlsVisible, setControlsVisible] = useState(true)
+  const hideControlsTimer = useRef(null)
   // Live refs — updated every render, read inside rAF without stale closures
   const offsetMsRef = useRef(0)
   const blocksL1Ref = useRef([])
@@ -862,6 +871,7 @@ export default function Home() {
   const handleVideoFile = (file) => {
     if (!file || !file.type.startsWith('video/')) return
     if (videoUrl) URL.revokeObjectURL(videoUrl)
+    setRestoredSession(false)
     setVideoFile(file)
     setVideoUrl(URL.createObjectURL(file))
     setCurrentSubText('')
@@ -878,6 +888,18 @@ export default function Home() {
     setVideoSpeed(speed)
     if (videoRef.current) videoRef.current.playbackRate = speed
   }
+
+  // The fullscreen button follows the player's own controls: it appears when the mouse moves and
+  // fades a few seconds later, but stays put whenever the film is paused.
+  const revealControls = () => {
+    setControlsVisible(true)
+    if (hideControlsTimer.current) clearTimeout(hideControlsTimer.current)
+    hideControlsTimer.current = setTimeout(() => {
+      if (videoRef.current && !videoRef.current.paused) setControlsVisible(false)
+    }, 2600)
+  }
+
+  useEffect(() => () => { if (hideControlsTimer.current) clearTimeout(hideControlsTimer.current) }, [])
 
   const handleContainerFullscreen = () => {
     const el = containerRef.current
@@ -902,6 +924,29 @@ export default function Home() {
       document.removeEventListener('webkitfullscreenchange', onChange)
     }
   }, [])
+
+  // Write the workspace down whenever it changes, so a refresh picks up where you left off.
+  // Debounced because the sliders fire continuously while being dragged.
+  useEffect(() => {
+    const id = setTimeout(() => {
+      saveSession({
+        query, year, contentType, season, episode,
+        searchResults, selectedTitle,
+        lang1, lang2, mode1, mode2,
+        subResultsL1, subResultsL2, selectedSubL1, selectedSubL2,
+        blocksL1, blocksL2,
+        langWarnL1, langWarnL2,
+        translateSourceL1, translateSourceL2,
+        offsetMs, secondaryOffsetMs, autoAlign, pageMode,
+      })
+    }, 400)
+    return () => clearTimeout(id)
+  }, [
+    query, year, contentType, season, episode, searchResults, selectedTitle,
+    lang1, lang2, mode1, mode2, subResultsL1, subResultsL2, selectedSubL1, selectedSubL2,
+    blocksL1, blocksL2, langWarnL1, langWarnL2, translateSourceL1, translateSourceL2,
+    offsetMs, secondaryOffsetMs, autoAlign, pageMode,
+  ])
 
   // Measure how the two tracks line up. Sweeping a feature-length pair takes up to a second,
   // so it runs after a paint rather than during render, and the panel says it is working.
@@ -1320,7 +1365,17 @@ export default function Home() {
               <div className="selected-banner-title">{selectedTitle.title}</div>
               <div className="selected-banner-meta">{selectedTitle.year} · {selectedTitle.type === 'tv' ? 'TV Series' : 'Movie'}</div>
             </div>
-            <button onClick={() => { setSelectedTitle(null); setBlocksL1([]); setBlocksL2([]) }} className="close-btn">×</button>
+            <button
+              onClick={() => {
+                setSelectedTitle(null); setBlocksL1([]); setBlocksL2([])
+                setSubResultsL1([]); setSubResultsL2([]); setSelectedSubL1(null); setSelectedSubL2(null)
+                setErrorL1(''); setErrorL2(''); setLangWarnL1(''); setLangWarnL2('')
+                setTranslateSourceL1(''); setTranslateSourceL2('')
+                clearSession()
+              }}
+              className="close-btn"
+              title="Clear this title and start over"
+            >×</button>
           </div>
         </div>
       )}
@@ -1621,6 +1676,14 @@ export default function Home() {
               <div className="video-drop-icon">▶</div>
               <div className="video-drop-text">Drop your video file here</div>
               <div className="video-drop-sub">or click to browse · MP4, MKV, WebM</div>
+              {/* Subtitles survive a refresh; the film cannot. A browser is not allowed to
+                  reopen a file from your disk on its own, so it has to be picked again. */}
+              {restoredSession && (
+                <div className="video-drop-sub" style={{ marginTop: 8, color: 'var(--accent2)' }}>
+                  Your subtitles were kept. The video has to be picked again, as browsers cannot
+                  reopen a file from your computer on their own.
+                </div>
+              )}
               <input
                 id="video-file-input"
                 type="file"
@@ -1631,13 +1694,24 @@ export default function Home() {
             </div>
           ) : (
             <div className="video-player-wrap">
-              <div className="video-container" ref={containerRef}>
+              <div
+                className="video-container"
+                ref={containerRef}
+                onMouseMove={revealControls}
+                onMouseLeave={() => { if (videoRef.current && !videoRef.current.paused) setControlsVisible(false) }}
+                onTouchStart={revealControls}
+              >
+                {/* Picture-in-picture is turned off: its icon looks like a fullscreen control
+                    and is not one, which is the second button that appeared to do nothing. */}
                 <video
                   ref={videoRef}
                   src={videoUrl}
                   controls
-                  controlsList="nofullscreen nodownload"
+                  controlsList="nofullscreen nodownload noremoteplayback"
+                  disablePictureInPicture
                   className="video-el"
+                  onPlay={revealControls}
+                  onPause={() => { if (hideControlsTimer.current) clearTimeout(hideControlsTimer.current); setControlsVisible(true) }}
                 />
                 {(currentSubText || currentSubText2) && (
                   <div className="video-sub-overlay">
@@ -1656,9 +1730,9 @@ export default function Home() {
                   </div>
                 )}
                 <button
-                  className="video-fs-btn"
+                  className={`video-fs-btn ${controlsVisible ? 'visible' : ''}`}
                   onClick={handleContainerFullscreen}
-                  title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
+                  title={isFullscreen ? 'Exit full screen' : 'Full screen (keeps the subtitles on screen)'}
                 >
                   {isFullscreen ? '✕ Exit' : '⛶ Full'}
                 </button>
