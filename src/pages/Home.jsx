@@ -677,6 +677,7 @@ export default function Home() {
   // True only between asking for full screen and hearing back, so a failure to LEAVE it is never
   // reported as the browser refusing to enter it.
   const enteringFullscreen = useRef(false)
+  const fsSettleTimer = useRef(null)
   const [barVisible, setBarVisible] = useState(true)
   const hideControlsTimer = useRef(null)
   // Our own controls, so there is nothing of Chrome's left to collide with.
@@ -1025,12 +1026,31 @@ export default function Home() {
       setIsFullscreen(!!el)
       setBarVisible(true)
       if (!el) return
-      if (!fullscreenIsReal({ outerHeight: window.outerHeight, screenHeight: window.screen.height })) {
-        // Say what was measured rather than name a cause. An earlier version blamed docked
-        // DevTools, and Migs disproved that in one screenshot: YouTube fills his display with
-        // DevTools docked in the same window.
-        setVideoNote(`Full screen did not fill the display. The window stayed ${Math.round(window.outerHeight)}px tall on a ${Math.round(window.screen.height)}px screen, so the picture is only as big as the page was.`)
+      // Measuring here reads the size the window had a moment ago. fullscreenchange fires when
+      // the ELEMENT enters full screen; the window resizing to the display happens after, and
+      // window.outerHeight has not caught up yet. On Migs' machine, on the same successful full
+      // screen, the app read 1192 at once while a probe half a second later read 1226.
+      //
+      // So wait for the window to settle: the first resize after entering, or a second, whichever
+      // comes first, and only then judge it.
+      if (fsSettleTimer.current) clearTimeout(fsSettleTimer.current)
+      let judged = false
+      const judge = () => {
+        if (judged) return
+        judged = true
+        window.removeEventListener('resize', onResize)
+        if (fsSettleTimer.current) { clearTimeout(fsSettleTimer.current); fsSettleTimer.current = null }
+        // It may have been left again while we waited.
+        if (!(document.fullscreenElement || document.webkitFullscreenElement)) return
+        if (!fullscreenIsReal({ outerHeight: window.outerHeight, screenHeight: window.screen.height })) {
+          // State what was measured and name no cause. Two earlier versions named one and both
+          // were wrong.
+          setVideoNote(`Full screen did not fill the display. The window is ${Math.round(window.outerHeight)}px tall on a ${Math.round(window.screen.height)}px screen, so the picture is only as big as the page was.`)
+        }
       }
+      const onResize = () => { if (fsSettleTimer.current) clearTimeout(fsSettleTimer.current); fsSettleTimer.current = setTimeout(judge, 250) }
+      window.addEventListener('resize', onResize)
+      fsSettleTimer.current = setTimeout(judge, 1000)
     }
     // fullscreenerror is the only signal a browser that returns no promise gives, but it carries
     // no sense of which request failed. It speaks only while one of ours is in flight.
@@ -1048,6 +1068,7 @@ export default function Home() {
       document.removeEventListener('webkitfullscreenchange', onChange)
       document.removeEventListener('fullscreenerror', onError)
       document.removeEventListener('webkitfullscreenerror', onError)
+      if (fsSettleTimer.current) clearTimeout(fsSettleTimer.current)
     }
   }, [])
 
