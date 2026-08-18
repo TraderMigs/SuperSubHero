@@ -802,26 +802,49 @@ h1, h2, h3, h4 {
   gap: 16px;
 }
 
+/* ── The player ──
+   Controls live in a band under the picture rather than floating on top of it. That is the
+   whole reason this exists: the old fullscreen button floated at a fixed offset from the
+   bottom and landed on Chrome's own volume and overflow buttons, stealing their clicks. A
+   band cannot collide with anything, at any player width, in any Chrome version. */
 .video-container {
   position: relative;
   width: 100%;
   background: #000;
   border-radius: 12px;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* A fixed frame rather than a box that changes height with each film, so Fill has something to
+   fill and the page does not jump when a new video loads. */
+.video-stage {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: #000;
   line-height: 0;
+  cursor: pointer;
 }
 
 .video-el {
+  position: absolute;
+  inset: 0;
   width: 100%;
-  display: block;
-  max-height: 520px;
+  height: 100%;
   object-fit: contain;
   background: #000;
+  display: block;
 }
+
+/* Crop the sides instead of living with black bands. A 2.35:1 film on a 16:9 screen is 24%
+   black by geometry, and this is the only way to spend that back. */
+.video-el.fill { object-fit: cover; }
 
 .video-sub-overlay {
   position: absolute;
-  bottom: 52px;
+  bottom: 24px;
   left: 0;
   right: 0;
   display: flex;
@@ -830,21 +853,12 @@ h1, h2, h3, h4 {
   gap: 2px;
   pointer-events: none;
   padding: 0 16px;
+  transition: bottom 0.2s ease;
 }
 
-.video-sub-line {
-  background: rgba(0,0,0,0.82);
-  color: #fff;
-  font-family: 'Instrument Sans', sans-serif;
-  font-size: 18px;
-  font-weight: 500;
-  padding: 4px 14px;
-  border-radius: 4px;
-  text-align: center;
-  text-shadow: 1px 1px 2px rgba(0,0,0,1);
-  line-height: 1.5;
-  max-width: 80%;
-}
+/* Subtitle lines carry no class: src/lib/subOverlay.js writes their look inline, so that the
+   text can be written as text nodes rather than HTML. Styling them here as well would be two
+   owners for one thing, and the inline one would win. */
 
 .video-controls-bar {
   background: var(--card);
@@ -922,30 +936,203 @@ h1, h2, h3, h4 {
 
 @media (max-width: 480px) {
   .video-section { padding: 0 14px 40px; }
-  .video-sub-line { font-size: 14px; }
   .video-speed-btns { gap: 4px; }
   .video-speed-btn { padding: 6px 8px; font-size: 11px; }
+  /* On a phone the band has no room for three zones, so the title steps out and the
+     transport takes the middle on its own. */
+  .video-bar { padding: 10px 12px 12px; }
+  .video-bar-row { grid-template-columns: auto 1fr; }
+  .video-title { display: none; }
+  .video-transport { gap: 14px; justify-self: start; }
+  .video-utils { gap: 10px; }
+  .video-counts { display: none; }
+  .video-play { width: 44px; height: 44px; }
 }
 
-/* DUAL LANGUAGE OVERLAY + LINE COUNTER */
-.video-sub-line.lang2 {
-  color: var(--accent);
-  text-shadow: 1px 1px 2px rgba(0,0,0,1);
+/* ── Control band ──
+   Two rows. The scrub bar owns the first, full width, elapsed at the far left and total at the
+   far right. The second is three zones: title, transport, utilities. One accent colour appears
+   in exactly two places, the play ring and the scrub handle, and one control is emphasised. */
+.video-bar {
+  background: #000;
+  padding: 12px 20px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex-shrink: 0;
 }
 
-.video-line-counter {
-  position: absolute;
-  top: 10px;
-  right: 14px;
-  background: rgba(0,0,0,0.6);
-  color: var(--muted);
-  font-size: 11px;
+.video-seek-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.video-time {
   font-family: monospace;
-  padding: 3px 8px;
-  border-radius: 4px;
-  pointer-events: none;
+  font-size: 12px;
+  color: var(--muted);
   letter-spacing: 0.03em;
+  min-width: 58px;
+  flex-shrink: 0;
 }
+.video-time.total { text-align: right; }
+
+.video-seek {
+  flex: 1;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 14px;
+  background: transparent;
+  cursor: pointer;
+  min-width: 0;
+}
+.video-seek::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 2px;
+  background: linear-gradient(to right, #d8d8de 0 var(--played, 0%), #333340 var(--played, 0%) 100%);
+}
+.video-seek::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 11px;
+  height: 11px;
+  margin-top: -4px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 4px rgba(200,241,53,0.22);
+  border: none;
+}
+.video-seek::-moz-range-track { height: 3px; border-radius: 2px; background: #333340; }
+.video-seek::-moz-range-progress { height: 3px; border-radius: 2px; background: #d8d8de; }
+.video-seek::-moz-range-thumb { width: 11px; height: 11px; border-radius: 50%; background: var(--accent); border: none; }
+.video-seek:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 4px; }
+
+.video-bar-row {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 16px;
+}
+
+.video-title {
+  font-size: 13px;
+  color: #b9b9c4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.video-transport {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  justify-self: center;
+}
+
+.video-utils {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  justify-self: end;
+  min-width: 0;
+}
+
+/* Every control is the same weight and size except one. */
+.video-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  color: #d8d8de;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: color 0.15s;
+  flex-shrink: 0;
+}
+.video-btn:hover { color: #fff; }
+.video-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.video-btn svg { width: 21px; height: 21px; display: block; }
+.video-btn.on { color: var(--accent); }
+
+/* The single emphasised control. The gradient sits in the border, so the ring reads as one
+   ring rather than a filled disc with a hole in it. */
+.video-play {
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  background:
+    linear-gradient(#000, #000) padding-box,
+    linear-gradient(135deg, var(--accent), var(--accent2)) border-box;
+  color: #fff;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  padding: 0;
+  transition: transform 0.12s ease;
+  flex-shrink: 0;
+}
+.video-play:hover { transform: scale(1.06); }
+.video-play:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.video-play svg { width: 20px; height: 20px; display: block; }
+
+/* Volume opens on hover rather than taking permanent width. */
+.video-vol-wrap { display: flex; align-items: center; gap: 6px; }
+.video-vol {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 0;
+  opacity: 0;
+  height: 14px;
+  background: transparent;
+  cursor: pointer;
+  transition: width 0.18s ease, opacity 0.18s ease;
+}
+.video-vol-wrap:hover .video-vol,
+.video-vol:focus-visible { width: 72px; opacity: 1; }
+.video-vol::-webkit-slider-runnable-track { height: 3px; border-radius: 2px; background: linear-gradient(to right, #d8d8de 0 var(--vol, 100%), #333340 var(--vol, 100%) 100%); }
+.video-vol::-webkit-slider-thumb { -webkit-appearance: none; width: 9px; height: 9px; margin-top: -3px; border-radius: 50%; background: #d8d8de; border: none; }
+.video-vol::-moz-range-track { height: 3px; border-radius: 2px; background: #333340; }
+.video-vol::-moz-range-thumb { width: 9px; height: 9px; border-radius: 50%; background: #d8d8de; border: none; }
+
+.video-counts {
+  font-family: monospace;
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* A note the player has to make, such as a browser refusing full screen. Sits in the band, in
+   the flow, so it can never cover the picture. */
+.video-note {
+  font-size: 12px;
+  color: #ffd166;
+  padding: 0 20px 12px;
+  background: #000;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  line-height: 1.45;
+}
+.video-note button {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px 4px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+.video-note button:hover { color: var(--text); }
 
 /* SYNC TYPE-IN INPUT */
 .sync-input {
@@ -1109,103 +1296,66 @@ h1, h2, h3, h4 {
   width: 86px;
 }
 
-/* The browser's own fullscreen button is hidden because it would fullscreen the video element
-   alone, and the subtitles are drawn in a layer outside it, so they would vanish. Two buttons
-   sat side by side and only one of them did anything. */
-video.video-el::-webkit-media-controls-fullscreen-button { display: none !important; }
+/* ── Fullscreen ──
+   Chrome's own stylesheet already pins a fullscreen element to the screen with position fixed,
+   inset 0 and 100% width and height, all marked !important. Browser !important outranks author
+   !important, so the block that used to sit here restating those values never applied either
+   before or after it was written. Only the things Chrome does not set are set here.
 
-/* ── Custom fullscreen button ── */
-.video-fs-btn {
-  position: absolute;
-  bottom: 54px;
-  right: 10px;
-  background: rgba(0,0,0,0.6);
-  color: #fff;
-  border: 1px solid rgba(255,255,255,0.3);
-  border-radius: 6px;
-  padding: 4px 10px;
-  font-size: 13px;
-  cursor: pointer;
-  z-index: 20;
-  pointer-events: all;
-  line-height: 1.4;
-  /* Fades with the player's own controls instead of sitting on the film the whole way through. */
-  opacity: 0;
-  transition: opacity 0.2s ease;
-}
-.video-fs-btn.visible { opacity: 1; }
-.video-fs-btn:hover { background: rgba(0,0,0,0.9); opacity: 1; }
-.video-fs-btn:focus-visible { opacity: 1; outline: 2px solid var(--accent); }
-
-/* ── Container fullscreen layout ── */
-/* 100% rather than 100vw/100vh: the fullscreen element already fills the screen, while the
-   viewport units can disagree with it and push the picture off the edge. */
+   The picture takes the whole screen and the band floats over the bottom of it, rather than
+   sitting below it in the flow as it does in the page. A band in the flow would cost 100px of
+   picture height for the whole film. */
 .video-container:fullscreen,
 .video-container:-webkit-full-screen {
-  width: 100% !important;
-  height: 100% !important;
-  max-width: none !important;
-  background: #000 !important;
-  border-radius: 0 !important;
-  overflow: hidden !important;
-  display: block !important;
+  border-radius: 0;
+  background: #000;
 }
 
-/* Video fills the whole screen */
-.video-container:fullscreen .video-el,
-.video-container:-webkit-full-screen .video-el {
-  position: absolute !important;
-  inset: 0 !important;
-  width: 100% !important;
-  height: 100% !important;
-  max-height: none !important;
-  object-fit: contain !important;
-  z-index: 1 !important;
+.video-container:fullscreen .video-stage,
+.video-container:-webkit-full-screen .video-stage {
+  position: absolute;
+  inset: 0;
+  aspect-ratio: auto;
 }
 
-/* Subtitle overlay pinned to bottom, above video */
+.video-container:fullscreen .video-bar,
+.video-container:-webkit-full-screen .video-bar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  background: linear-gradient(to top, rgba(0,0,0,0.92) 0%, rgba(0,0,0,0.82) 62%, rgba(0,0,0,0) 100%);
+  padding: 40px 34px 22px;
+  gap: 14px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.22s ease;
+}
+
+/* Shown while paused, and for a moment after the mouse moves. */
+.video-container:fullscreen .video-bar.showing,
+.video-container:-webkit-full-screen .video-bar.showing {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.video-container:fullscreen .video-note,
+.video-container:-webkit-full-screen .video-note {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 11;
+  background: rgba(0,0,0,0.86);
+  padding: 12px 20px;
+}
+
+/* How far up the subtitles sit is worked out from the film's own shape in Home.jsx and written
+   as an inline offset, since it depends on how tall the black band is. Only the spacing that
+   does not depend on the film lives here. */
 .video-container:fullscreen .video-sub-overlay,
 .video-container:-webkit-full-screen .video-sub-overlay {
-  position: absolute !important;
-  bottom: 64px !important;
-  top: auto !important;
-  left: 0 !important;
-  right: 0 !important;
-  width: 100% !important;
-  display: flex !important;
-  flex-direction: column !important;
-  align-items: center !important;
-  gap: 4px !important;
-  pointer-events: none !important;
-  padding: 0 24px !important;
-  box-sizing: border-box !important;
-  z-index: 9999 !important;
-}
-
-.video-container:fullscreen .video-sub-line,
-.video-container:-webkit-full-screen .video-sub-line {
-  font-size: 28px !important;
-  padding: 6px 20px !important;
-  max-width: 85% !important;
-}
-
-.video-container:fullscreen .video-sub-line.lang2,
-.video-container:-webkit-full-screen .video-sub-line.lang2 {
-  font-size: 26px !important;
-}
-
-.video-container:fullscreen .video-line-counter,
-.video-container:-webkit-full-screen .video-line-counter {
-  position: absolute !important;
-  top: 12px !important;
-  right: 12px !important;
-  z-index: 9999 !important;
-}
-
-.video-container:fullscreen .video-fs-btn,
-.video-container:-webkit-full-screen .video-fs-btn {
-  position: absolute !important;
-  bottom: 14px !important;
-  right: 12px !important;
-  z-index: 9999 !important;
+  padding: 0 24px;
+  gap: 4px;
 }

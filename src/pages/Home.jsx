@@ -1,14 +1,47 @@
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { LANGUAGES, SEARCH_LANGUAGES } from '../lib/languages.js'
 import { parseSrt, buildSrt, mergeSrts, mergeSrtsDetailed, downloadFile, applyOffset, retimeBlocks } from '../lib/srt.js'
-import { renderSubtitleOverlay, overlayRenderKey, fullscreenPaddingBottom } from '../lib/subOverlay.js'
+import { renderSubtitleOverlay, overlayRenderKey } from '../lib/subOverlay.js'
 import { analyzeAlignment, describeAlignment, isIdentityTransform } from '../lib/align.js'
 import { parseRelease, compareReleases, MATCH_COLORS } from '../lib/release.js'
 import { verifyLanguage } from '../lib/language.js'
 import { loadSession, saveSession, clearSession, restored } from '../lib/session.js'
+import { pickVideoFile, rememberVideo, restoreVideo, grantVideo, forgetVideo } from '../lib/videoStore.js'
+import { clockTime, fullscreenIsReal, subtitleBottomPx } from '../lib/player.js'
 
 // Shown in the Preview box only until real subtitle lines are loaded.
 const PREVIEW_SAMPLE = 'May the Force be with you.'
+
+// Player icons. One weight, one size, drawn rather than imported so there is no font to load
+// and no square that fails to render on a machine without the emoji for it.
+const Icon = ({ d, fill = false }) => (
+  <svg viewBox="0 0 24 24" aria-hidden="true" fill={fill ? 'currentColor' : 'none'} stroke={fill ? 'none' : 'currentColor'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    <path d={d} />
+  </svg>
+)
+const ICONS = {
+  play: 'M8 5.5v13l11-6.5z',
+  pause: 'M9 5.5v13M15 5.5v13',
+  volume: 'M5 9.5v5h3l4 3.5v-12L8 9.5H5zM16 9a4 4 0 0 1 0 6',
+  mute: 'M5 9.5v5h3l4 3.5v-12L8 9.5H5zM16 9.5l4 5M20 9.5l-4 5',
+  // Cropping the sides is its own idea, so it gets its own glyph. It sat next to the full
+  // screen button wearing the same four corner brackets, which made two different buttons
+  // look like one control drawn twice.
+  crop: 'M6.5 2.5v13a2 2 0 0 0 2 2h13M2.5 6.5h13a2 2 0 0 1 2 2v13',
+  expand: 'M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5',
+  collapse: 'M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5',
+}
+
+// The seconds live inside the arc, in the same drawing, so they cannot drift out of place.
+// As a positioned span over the icon they landed dead centre, on top of the arrow itself.
+const SkipIcon = ({ back, seconds }) => (
+  <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
+    <path d={back ? 'M12 4a8 8 0 1 1-8 8' : 'M12 4a8 8 0 1 0 8 8'} />
+    <path d={back ? 'M12 1.4 12 6.6 8.8 4z' : 'M12 1.4 12 6.6 15.2 4z'} fill="currentColor" stroke="none" />
+    <text x="12" y="15.4" textAnchor="middle" fontSize="8.5" fontWeight="700" fill="currentColor" stroke="none" fontFamily="monospace">{seconds}</text>
+  </svg>
+)
+
 
 // Trim a subtitle line to something that fits the small preview box.
 function previewText(value, fallback = '') {
@@ -556,8 +589,6 @@ export default function Home() {
   // Whatever was on screen before the last refresh. A reload used to discard the search, the
   // chosen title, both subtitle tracks and any AI translation, which costs money to redo.
   const saved = useRef(loadSession()).current
-  // True only on the load right after a refresh, so the video note is not shown forever.
-  const [restoredSession, setRestoredSession] = useState(() => Array.isArray(saved.blocksL1) && saved.blocksL1.length > 0)
 
   const [query, setQuery] = useState(() => restored(saved, 'query', ''))
   const [year, setYear] = useState(() => restored(saved, 'year', ''))
@@ -643,8 +674,19 @@ export default function Home() {
   const animFrameRef = useRef(null)
   const fsOverlayRef = useRef(null)
   const [isFullscreen, setIsFullscreen] = useState(false)
-  const [controlsVisible, setControlsVisible] = useState(true)
+  const [barVisible, setBarVisible] = useState(true)
   const hideControlsTimer = useRef(null)
+  // Our own controls, so there is nothing of Chrome's left to collide with.
+  const [isPlaying, setIsPlaying] = useState(false)
+  const [currentTime, setCurrentTime] = useState(0)
+  const [duration, setDuration] = useState(0)
+  const [volume, setVolume] = useState(1)
+  const [muted, setMuted] = useState(false)
+  const [fillMode, setFillMode] = useState(false)
+  const [videoNote, setVideoNote] = useState('')
+  // A film waiting behind a stored handle, one click from coming back.
+  const [pendingVideo, setPendingVideo] = useState(null)
+  const videoHandleRef = useRef(null)
   // Live refs — updated every render, read inside rAF without stale closures
   const offsetMsRef = useRef(0)
   const blocksL1Ref = useRef([])
@@ -868,34 +910,74 @@ export default function Home() {
   }
 
 
-  const handleVideoFile = (file) => {
+  const handleVideoFile = (file, handle = null) => {
     if (!file || !file.type.startsWith('video/')) return
     if (videoUrl) URL.revokeObjectURL(videoUrl)
-    setRestoredSession(false)
+    setPendingVideo(null)
     setVideoFile(file)
     setVideoUrl(URL.createObjectURL(file))
     setCurrentSubText('')
+    setCurrentTime(0)
+    setDuration(0)
+    videoHandleRef.current = handle
+    // Remembering the film is a convenience, never a reason to fail to play it.
+    rememberVideo(file, handle).catch(() => {})
   }
 
   const handleVideoDrop = (e) => {
     e.preventDefault()
     setVideoDragging(false)
-    const file = e.dataTransfer.files[0]
-    handleVideoFile(file)
+    // A dropped file carries no handle, so this one is remembered by copying its bytes.
+    handleVideoFile(e.dataTransfer.files[0])
   }
+
+  // The picker route, which hands back a handle so the film can return by itself next time.
+  const handleVideoPick = async () => {
+    const picked = await pickVideoFile()
+    if (picked) handleVideoFile(picked.file, picked.handle)
+  }
+
+  const handleVideoRestore = async () => {
+    const res = await grantVideo(pendingVideo?.handle)
+    if (res.status === 'ready') handleVideoFile(res.file, res.handle)
+    else setVideoNote('That file could not be opened. It may have been moved, renamed or deleted since last time.')
+  }
+
+  const handleVideoRemove = () => {
+    if (videoUrl) URL.revokeObjectURL(videoUrl)
+    setVideoFile(null)
+    setVideoUrl(null)
+    setPendingVideo(null)
+    setCurrentSubText('')
+    setCurrentSubText2('')
+    videoHandleRef.current = null
+    forgetVideo().catch(() => {})
+  }
+
+  // Look for a film left over from last time. A stored handle needs one click; stored bytes
+  // come straight back.
+  useEffect(() => {
+    let cancelled = false
+    restoreVideo().then(res => {
+      if (cancelled || res.status === 'none') return
+      if (res.status === 'ready') handleVideoFile(res.file, res.handle || null)
+      else if (res.status === 'needs-permission') setPendingVideo({ handle: res.handle, meta: res.meta })
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [])
 
   const handleVideoSpeed = (speed) => {
     setVideoSpeed(speed)
     if (videoRef.current) videoRef.current.playbackRate = speed
   }
 
-  // The fullscreen button follows the player's own controls: it appears when the mouse moves and
-  // fades a few seconds later, but stays put whenever the film is paused.
+  // In the page the band sits under the picture and stays put. Full screen is the only place it
+  // floats, so it is the only place it hides.
   const revealControls = () => {
-    setControlsVisible(true)
+    setBarVisible(true)
     if (hideControlsTimer.current) clearTimeout(hideControlsTimer.current)
     hideControlsTimer.current = setTimeout(() => {
-      if (videoRef.current && !videoRef.current.paused) setControlsVisible(false)
+      if (videoRef.current && !videoRef.current.paused) setBarVisible(false)
     }, 2600)
   }
 
@@ -907,23 +989,133 @@ export default function Home() {
     if (document.fullscreenElement || document.webkitFullscreenElement) {
       if (document.exitFullscreen) document.exitFullscreen()
       else if (document.webkitExitFullscreen) document.webkitExitFullscreen()
-    } else {
-      if (el.requestFullscreen) el.requestFullscreen()
-      else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen()
+      return
+    }
+    setVideoNote('')
+    // A refused request used to do nothing at all and leave the button looking broken.
+    try {
+      const p = el.requestFullscreen ? el.requestFullscreen() : (el.webkitRequestFullscreen && el.webkitRequestFullscreen())
+      if (p && p.catch) p.catch(err => setVideoNote(`This browser would not go full screen (${err?.name || 'refused'}). F11 makes the whole window full screen instead.`))
+    } catch (err) {
+      setVideoNote(`This browser would not go full screen (${err?.name || 'refused'}). F11 makes the whole window full screen instead.`)
     }
   }
 
   useEffect(() => {
     const onChange = () => {
-      setIsFullscreen(!!(document.fullscreenElement || document.webkitFullscreenElement))
+      const el = document.fullscreenElement || document.webkitFullscreenElement
+      setIsFullscreen(!!el)
+      setBarVisible(true)
+      if (!el) return
+      if (!fullscreenIsReal({ outerHeight: window.outerHeight, screenHeight: window.screen.height })) {
+        setVideoNote('Your browser kept full screen inside the window rather than filling the display. Docked DevTools is the usual cause: close it, or move it to its own window, then try again.')
+      }
     }
+    const onError = () => setVideoNote('This browser refused full screen for this page. F11 makes the whole window full screen instead.')
     document.addEventListener('fullscreenchange', onChange)
     document.addEventListener('webkitfullscreenchange', onChange)
+    document.addEventListener('fullscreenerror', onError)
+    document.addEventListener('webkitfullscreenerror', onError)
     return () => {
       document.removeEventListener('fullscreenchange', onChange)
       document.removeEventListener('webkitfullscreenchange', onChange)
+      document.removeEventListener('fullscreenerror', onError)
+      document.removeEventListener('webkitfullscreenerror', onError)
     }
   }, [])
+
+  // Where the subtitles sit.
+  //
+  // A fixed offset from the bottom of the player puts them in the black band rather than on the
+  // picture, because how tall that band is depends on the film. Measured on a 2.35:1 film in a
+  // 16:9 frame: a 65px band with the overlay 24px up, which left the first line on the picture
+  // and the second below it. The band is arithmetic from the video's own shape, so it is worked
+  // out rather than guessed, and it holds for any film in any window.
+  const [subBottom, setSubBottom] = useState(24)
+  useEffect(() => {
+    const v = videoRef.current
+    const stage = v && v.parentElement
+    if (!v || !stage) return
+    const measure = () => {
+      const r = stage.getBoundingClientRect()
+      setSubBottom(subtitleBottomPx({
+        stageWidth: r.width, stageHeight: r.height,
+        videoWidth: v.videoWidth, videoHeight: v.videoHeight,
+        fill: fillMode,
+      }))
+    }
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(stage)
+    v.addEventListener('loadedmetadata', measure)
+    return () => { ro.disconnect(); v.removeEventListener('loadedmetadata', measure) }
+  }, [videoUrl, fillMode, isFullscreen])
+
+  // Transport. Everything the browser's own controls used to do, minus the parts that used to
+  // collide with ours.
+  const togglePlay = () => {
+    const v = videoRef.current
+    if (!v) return
+    if (v.paused) v.play().catch(() => {})
+    else v.pause()
+  }
+
+  const seekBy = (seconds) => {
+    const v = videoRef.current
+    if (!v || !isFinite(v.duration)) return
+    v.currentTime = Math.min(v.duration, Math.max(0, v.currentTime + seconds))
+    revealControls()
+  }
+
+  const handleSeek = (e) => {
+    const v = videoRef.current
+    const to = Number(e.target.value)
+    setCurrentTime(to)
+    if (v && isFinite(to)) v.currentTime = to
+  }
+
+  const handleVolume = (e) => {
+    const next = Number(e.target.value)
+    setVolume(next)
+    setMuted(next === 0)
+    if (videoRef.current) { videoRef.current.volume = next; videoRef.current.muted = next === 0 }
+  }
+
+  const toggleMute = () => {
+    const v = videoRef.current
+    const next = !muted
+    setMuted(next)
+    if (v) v.muted = next
+  }
+
+  // Keyboard, which the native controls gave us for free and now has to be ours. Skipped while
+  // a field has focus, so typing a search or a sync offset does not scrub the film.
+  useEffect(() => {
+    if (!videoUrl) return
+    const onKey = (e) => {
+      const t = e.target
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return
+      if (e.metaKey || e.ctrlKey || e.altKey) return
+      const keys = { ' ': 1, k: 1, ArrowLeft: 1, ArrowRight: 1, ArrowUp: 1, ArrowDown: 1, f: 1, m: 1, j: 1, l: 1 }
+      if (!keys[e.key]) return
+      e.preventDefault()
+      revealControls()
+      if (e.key === ' ' || e.key === 'k') togglePlay()
+      else if (e.key === 'ArrowLeft') seekBy(-5)
+      else if (e.key === 'ArrowRight') seekBy(5)
+      else if (e.key === 'j') seekBy(-10)
+      else if (e.key === 'l') seekBy(10)
+      else if (e.key === 'f') handleContainerFullscreen()
+      else if (e.key === 'm') toggleMute()
+      else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+        const next = Math.min(1, Math.max(0, volume + (e.key === 'ArrowUp' ? 0.1 : -0.1)))
+        setVolume(next); setMuted(next === 0)
+        if (videoRef.current) { videoRef.current.volume = next; videoRef.current.muted = next === 0 }
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [videoUrl, volume, muted])
 
   // Write the workspace down whenever it changes, so a refresh picks up where you left off.
   // Debounced because the sliders fire continuously while being dragged.
@@ -985,26 +1177,11 @@ export default function Home() {
   useEffect(() => { blocksL2Ref.current = alignedL2 }, [alignedL2])
 
 
-  // ── Create subtitle portal overlay on mount (once) ──
-  useEffect(() => {
-    const overlay = document.createElement('div')
-    overlay.id = 'ssh-sub-portal'
-    overlay.style.cssText = [
-      'position:fixed',
-      'pointer-events:none',
-      'z-index:2147483647',
-      'display:flex',
-      'flex-direction:column',
-      'align-items:center',
-      'justify-content:flex-end',
-      'gap:3px',
-      'box-sizing:border-box',
-      'left:0','top:0','width:0','height:0',
-    ].join(';')
-    document.body.appendChild(overlay)
-    fsOverlayRef.current = overlay
-    return () => { if (overlay.parentNode) overlay.parentNode.removeChild(overlay) }
-  }, [])
+  // The overlay used to be a second copy of itself: one div inside the player and one pinned to
+  // the body at z-index 2147483647, both drawing the same cue, stacked. The body copy also had
+  // to be repositioned onto the video's rectangle on every frame, and it could not appear in
+  // full screen at all, since only the fullscreen element's own subtree is painted there. The
+  // one inside the player is placed by CSS and works in both states.
 
   // ── Single unified rAF loop — reads all live values from refs, never restarts on slider drag ──
   useEffect(() => {
@@ -1059,7 +1236,7 @@ export default function Home() {
       if (matchIdx !== lastLineIdx) { lastLineIdx = matchIdx; setCurrentLineIndex(matchIdx) }
       if (matchIdx2 !== lastLineIdx2) { lastLineIdx2 = matchIdx2; setCurrentLineIndex2(matchIdx2) }
 
-      // ── 2. Portal overlay position + subtitle render ──
+      // ── 2. Subtitle render ──
       const overlay = fsOverlayRef.current
       if (overlay) {
         const isFS = !!(
@@ -1069,25 +1246,9 @@ export default function Home() {
           document.msFullscreenElement
         )
 
-        if (isFS) {
-          // Fullscreen: cover entire screen — video rect is unreliable in native FS
-          overlay.style.left = '0'
-          overlay.style.top = '0'
-          overlay.style.width = '100vw'
-          overlay.style.height = '100vh'
-          overlay.style.paddingBottom = fullscreenPaddingBottom(window.innerHeight)
-        } else {
-          // Normal mode: track exact video element position
-          const rect = video.getBoundingClientRect()
-          overlay.style.left = rect.left + 'px'
-          overlay.style.top = rect.top + 'px'
-          overlay.style.width = rect.width + 'px'
-          overlay.style.height = rect.height + 'px'
-          overlay.style.paddingBottom = '52px'
-        }
-
         // Subtitle text is third-party content, so it is rendered as text nodes, never as
-        // HTML. Rebuilt only when the visible text (or the fullscreen size) changes.
+        // HTML. Rebuilt only when the visible text (or the fullscreen size) changes, and it
+        // caps each track at two lines, which several cues landing on one used to break.
         const draw = { primary: newSub1, secondary: newSub2, fullscreen: isFS, viewportHeight: window.innerHeight }
         const key = overlayRenderKey(draw)
         if (key !== lastOverlayKey) {
@@ -1671,26 +1832,24 @@ export default function Home() {
               onDragOver={e => { e.preventDefault(); setVideoDragging(true) }}
               onDragLeave={() => setVideoDragging(false)}
               onDrop={handleVideoDrop}
-              onClick={() => document.getElementById('video-file-input').click()}
+              onClick={handleVideoPick}
             >
               <div className="video-drop-icon">▶</div>
               <div className="video-drop-text">Drop your video file here</div>
               <div className="video-drop-sub">or click to browse · MP4, MKV, WebM</div>
-              {/* Subtitles survive a refresh; the film cannot. A browser is not allowed to
-                  reopen a file from your disk on its own, so it has to be picked again. */}
-              {restoredSession && (
-                <div className="video-drop-sub" style={{ marginTop: 8, color: 'var(--accent2)' }}>
-                  Your subtitles were kept. The video has to be picked again, as browsers cannot
-                  reopen a file from your computer on their own.
+              {/* A film left over from the last visit. The handle survived the refresh; the
+                  permission to read it did not, and a browser will only ask on a click. */}
+              {pendingVideo && (
+                <div className="video-drop-sub" style={{ marginTop: 10 }}>
+                  <button
+                    className="video-change-btn"
+                    style={{ borderColor: 'var(--accent)', color: 'var(--accent)' }}
+                    onClick={e => { e.stopPropagation(); handleVideoRestore() }}
+                  >
+                    ↩ Bring back {pendingVideo.meta?.name || 'your last video'}
+                  </button>
                 </div>
               )}
-              <input
-                id="video-file-input"
-                type="file"
-                accept="video/*"
-                style={{ display: 'none' }}
-                onChange={e => handleVideoFile(e.target.files[0])}
-              />
             </div>
           ) : (
             <div className="video-player-wrap">
@@ -1698,44 +1857,112 @@ export default function Home() {
                 className="video-container"
                 ref={containerRef}
                 onMouseMove={revealControls}
-                onMouseLeave={() => { if (videoRef.current && !videoRef.current.paused) setControlsVisible(false) }}
                 onTouchStart={revealControls}
               >
-                {/* Picture-in-picture is turned off: its icon looks like a fullscreen control
-                    and is not one, which is the second button that appeared to do nothing. */}
-                <video
-                  ref={videoRef}
-                  src={videoUrl}
-                  controls
-                  controlsList="nofullscreen nodownload noremoteplayback"
-                  disablePictureInPicture
-                  className="video-el"
-                  onPlay={revealControls}
-                  onPause={() => { if (hideControlsTimer.current) clearTimeout(hideControlsTimer.current); setControlsVisible(true) }}
-                />
-                {(currentSubText || currentSubText2) && (
-                  <div className="video-sub-overlay">
-                    {currentSubText && currentSubText.split('\n').map((line, i) => (
-                      <div key={i} className="video-sub-line">{line}</div>
-                    ))}
-                    {currentSubText2 && currentSubText2.split('\n').map((line, i) => (
-                      <div key={`l2-${i}`} className="video-sub-line lang2">{line}</div>
-                    ))}
+                {videoNote && (
+                  <div className="video-note">
+                    <span>{videoNote}</span>
+                    <button onClick={() => setVideoNote('')} aria-label="Dismiss">✕</button>
                   </div>
                 )}
-                {blocksL1.length > 0 && (
-                  <div className="video-line-counter">
-                    {`${lang1} ${currentLineIndex >= 0 ? currentLineIndex + 1 : 0}/${blocksL1.length}`}
-                    {hasDual && ` · ${lang2} ${currentLineIndex2 >= 0 ? currentLineIndex2 + 1 : 0}/${alignedL2.length}`}
+
+                <div className="video-stage" onClick={togglePlay}>
+                  <video
+                    ref={videoRef}
+                    src={videoUrl}
+                    className={`video-el ${fillMode ? 'fill' : ''}`}
+                    disablePictureInPicture
+                    onPlay={() => { setIsPlaying(true); revealControls() }}
+                    onPause={() => { setIsPlaying(false); if (hideControlsTimer.current) clearTimeout(hideControlsTimer.current); setBarVisible(true) }}
+                    onTimeUpdate={e => setCurrentTime(e.target.currentTime)}
+                    onDurationChange={e => setDuration(e.target.duration)}
+                    onLoadedMetadata={e => { setDuration(e.target.duration); e.target.playbackRate = videoSpeed; e.target.volume = volume }}
+                    onVolumeChange={e => { setVolume(e.target.volume); setMuted(e.target.muted) }}
+                    onEnded={() => setIsPlaying(false)}
+                  />
+                  {/* One overlay, filled by the render loop. There used to be two drawing the
+                      same cue: this one and a copy pinned to the body, stacked on each other. */}
+                  <div
+                    ref={fsOverlayRef}
+                    className="video-sub-overlay"
+                    style={{ bottom: (isFullscreen && barVisible ? subBottom + 96 : subBottom) + 'px' }}
+                  />
+                </div>
+
+                {/* The band. Nothing in it floats over the picture in the page, which is why
+                    the old button could no longer land on Chrome's volume and overflow. */}
+                <div className={`video-bar ${barVisible ? 'showing' : ''}`} onClick={e => e.stopPropagation()}>
+                  <div className="video-seek-row">
+                    <span className="video-time">{clockTime(currentTime)}</span>
+                    <input
+                      type="range"
+                      className="video-seek"
+                      min="0"
+                      max={duration || 0}
+                      step="0.1"
+                      value={Math.min(currentTime, duration || 0)}
+                      onChange={handleSeek}
+                      style={{ '--played': `${duration ? (currentTime / duration) * 100 : 0}%` }}
+                      aria-label="Seek"
+                    />
+                    <span className="video-time total">{clockTime(duration)}</span>
                   </div>
-                )}
-                <button
-                  className={`video-fs-btn ${controlsVisible ? 'visible' : ''}`}
-                  onClick={handleContainerFullscreen}
-                  title={isFullscreen ? 'Exit full screen' : 'Full screen (keeps the subtitles on screen)'}
-                >
-                  {isFullscreen ? '✕ Exit' : '⛶ Full'}
-                </button>
+
+                  <div className="video-bar-row">
+                    <div className="video-title">{selectedTitle?.title}{selectedTitle?.year ? ` ${selectedTitle.year}` : ''}</div>
+
+                    <div className="video-transport">
+                      <button className="video-btn" onClick={() => seekBy(-10)} title="Back 10 seconds" aria-label="Back 10 seconds">
+                        <SkipIcon back seconds="10" />
+                      </button>
+                      <button className="video-play" onClick={togglePlay} title={isPlaying ? 'Pause' : 'Play'} aria-label={isPlaying ? 'Pause' : 'Play'}>
+                        <Icon d={isPlaying ? ICONS.pause : ICONS.play} fill={!isPlaying} />
+                      </button>
+                      <button className="video-btn" onClick={() => seekBy(30)} title="Forward 30 seconds" aria-label="Forward 30 seconds">
+                        <SkipIcon seconds="30" />
+                      </button>
+                    </div>
+
+                    <div className="video-utils">
+                      {blocksL1.length > 0 && (
+                        <span className="video-counts">
+                          {`${lang1} ${currentLineIndex >= 0 ? currentLineIndex + 1 : 0}/${blocksL1.length}`}
+                          {hasDual && ` · ${lang2} ${currentLineIndex2 >= 0 ? currentLineIndex2 + 1 : 0}/${alignedL2.length}`}
+                        </span>
+                      )}
+                      <div className="video-vol-wrap">
+                        <button className="video-btn" onClick={toggleMute} title={muted ? 'Unmute' : 'Mute'} aria-label={muted ? 'Unmute' : 'Mute'}>
+                          <Icon d={muted || volume === 0 ? ICONS.mute : ICONS.volume} />
+                        </button>
+                        <input
+                          type="range" className="video-vol" min="0" max="1" step="0.05"
+                          value={muted ? 0 : volume} onChange={handleVolume}
+                          style={{ '--vol': `${(muted ? 0 : volume) * 100}%` }}
+                          aria-label="Volume"
+                        />
+                      </div>
+                      {/* A 2.35:1 film on a 16:9 screen is a quarter black by geometry. This
+                          spends that back by cropping the sides instead. */}
+                      <button
+                        className={`video-btn ${fillMode ? 'on' : ''}`}
+                        onClick={() => setFillMode(v => !v)}
+                        title={fillMode ? 'Fit the whole picture' : 'Fill the frame, cropping the sides'}
+                        aria-label={fillMode ? 'Fit the whole picture' : 'Fill the frame'}
+                        aria-pressed={fillMode}
+                      >
+                        <Icon d={ICONS.crop} />
+                      </button>
+                      <button
+                        className="video-btn"
+                        onClick={handleContainerFullscreen}
+                        title={isFullscreen ? 'Exit full screen' : 'Full screen'}
+                        aria-label={isFullscreen ? 'Exit full screen' : 'Full screen'}
+                      >
+                        <Icon d={isFullscreen ? ICONS.collapse : ICONS.expand} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
               </div>
 
               <div className="video-controls-bar">
@@ -1820,10 +2047,7 @@ export default function Home() {
                   </div>
                 )}
 
-                <button
-                  className="video-change-btn"
-                  onClick={() => { setVideoFile(null); setVideoUrl(null); setCurrentSubText('') }}
-                >
+                <button className="video-change-btn" onClick={handleVideoRemove}>
                   ✕ Remove Video
                 </button>
               </div>
