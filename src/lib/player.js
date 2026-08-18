@@ -24,17 +24,30 @@ export function clockTime(seconds) {
 // screen. Migs' case measured an outer height of 1192 against a screen height of 1235: still a
 // taskbar short, with the element sized to the page area at 2430x1333 rather than the display.
 //
-// The 8px allowance is for the odd rounding between device pixels and CSS pixels on a scaled
-// display, so a genuine full screen is never called a fake one.
+// The allowance matters more than the idea. A genuinely full screen Chrome window on Windows
+// does NOT report the screen's exact height, because Windows gives such a window an invisible
+// resize border. Measured on Migs' two displays while the picture provably filled the screen:
 //
-// outerHeight is not always a number worth trusting: measured in a real Chrome tab that had not
-// been brought to the front, window.outerWidth and window.outerHeight both read 0. Treating that
-// as "the window is zero pixels tall" would accuse every such case of faking it, so anything at
-// or below zero means we do not know, and saying nothing beats crying wolf.
-export function fullscreenIsReal({ outerHeight, screenHeight, tolerance = 8 } = {}) {
+//   screen 2195x1235  ->  window 2187x1226   9px short
+//   screen 1920x1080  ->  window 1904x1064  16px short
+//
+// against a merely maximised window on the same machine:
+//
+//   screen 2195x1235  ->  window 2199x1192  43px short, the taskbar
+//
+// An earlier 8px allowance sat below both real readings, so it called every successful full
+// screen a fake and put a warning on screen every time it worked. 2% of the screen height, with
+// a 24px floor, sits in the gap between 16 and 43. It errs towards silence: someone who hides
+// their taskbar has a maximised window nearly the size of the screen, and saying nothing then is
+// better than accusing a full screen that is fine.
+//
+// outerHeight is also not always worth trusting: measured in a real Chrome tab that had not been
+// brought to the front, outerWidth and outerHeight both read 0.
+export function fullscreenIsReal({ outerHeight, screenHeight, tolerance } = {}) {
   if (!isFinite(outerHeight) || !isFinite(screenHeight)) return true
   if (outerHeight <= 0 || screenHeight <= 0) return true
-  return outerHeight >= screenHeight - tolerance
+  const allowance = isFinite(tolerance) ? tolerance : Math.max(24, screenHeight * 0.02)
+  return outerHeight >= screenHeight - allowance
 }
 
 // How far above the bottom of the player the subtitles belong.

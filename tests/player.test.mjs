@@ -21,14 +21,25 @@ check('a negative does not print a negative', clockTime(-5) === '0:00', clockTim
 check('undefined is safe', clockTime(undefined) === '0:00', clockTime(undefined))
 
 console.log('\n-- was that really full screen --')
-// The real measurement from Migs' browser: the element reported itself fullscreen at 2430x1333
-// while the window was still 1192 tall on a 1235 screen, because DevTools was docked.
-check("Migs' docked-DevTools case is caught", fullscreenIsReal({ outerHeight: 1192, screenHeight: 1235 }) === false)
-check('a window filling the screen passes', fullscreenIsReal({ outerHeight: 1235, screenHeight: 1235 }) === true)
-check('a few pixels of rounding is not called a fake', fullscreenIsReal({ outerHeight: 1230, screenHeight: 1235 }) === true)
-check('nine pixels short is called out', fullscreenIsReal({ outerHeight: 1226, screenHeight: 1235 }) === false)
-check('a taskbar-height shortfall is called out', fullscreenIsReal({ outerHeight: 1032, screenHeight: 1080 }) === false)
+// These are measured, not invented. Migs ran a fullscreen probe on both of his displays and
+// photographed the result: the element filled the whole screen in every case, and Windows still
+// reported the window a few pixels smaller than the screen, because a full screen window gets an
+// invisible resize border. The first allowance shipped was 8px, below both readings, so it
+// called every working full screen a failure.
+check('big monitor, genuinely full screen', fullscreenIsReal({ outerHeight: 1226, screenHeight: 1235 }) === true)
+check('laptop screen, genuinely full screen', fullscreenIsReal({ outerHeight: 1064, screenHeight: 1080 }) === true)
+check('an exact match is obviously fine', fullscreenIsReal({ outerHeight: 1235, screenHeight: 1235 }) === true)
 check('a window taller than the screen is fine', fullscreenIsReal({ outerHeight: 1080, screenHeight: 1032 }) === true)
+// And the case that started all this: maximised, taskbar showing, element sized to the page.
+check("Migs' maximised window is still caught", fullscreenIsReal({ outerHeight: 1192, screenHeight: 1235 }) === false)
+check('a taskbar-height shortfall is caught at 1080p', fullscreenIsReal({ outerHeight: 1032, screenHeight: 1080 }) === false)
+check('a half-height window is obviously caught', fullscreenIsReal({ outerHeight: 600, screenHeight: 1235 }) === false)
+// The gap it has to sit inside: 16px short is real, 43px short is not.
+check('the allowance clears the largest real shortfall', fullscreenIsReal({ outerHeight: 1080 - 16, screenHeight: 1080 }) === true)
+check('and still catches the smallest fake one', fullscreenIsReal({ outerHeight: 1235 - 43, screenHeight: 1235 }) === false)
+check('a caller can still pin the allowance', fullscreenIsReal({ outerHeight: 1226, screenHeight: 1235, tolerance: 2 }) === false)
+
+console.log('\n-- numbers not worth trusting --')
 check('missing numbers never cry wolf', fullscreenIsReal({}) === true)
 check('a zero screen height never cries wolf', fullscreenIsReal({ outerHeight: 0, screenHeight: 0 }) === true)
 // Measured in a real Chrome tab that had not been fronted: outerWidth and outerHeight both 0.

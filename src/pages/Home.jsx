@@ -674,6 +674,9 @@ export default function Home() {
   const animFrameRef = useRef(null)
   const fsOverlayRef = useRef(null)
   const [isFullscreen, setIsFullscreen] = useState(false)
+  // True only between asking for full screen and hearing back, so a failure to LEAVE it is never
+  // reported as the browser refusing to enter it.
+  const enteringFullscreen = useRef(false)
   const [barVisible, setBarVisible] = useState(true)
   const hideControlsTimer = useRef(null)
   // Our own controls, so there is nothing of Chrome's left to collide with.
@@ -987,11 +990,16 @@ export default function Home() {
     const el = containerRef.current
     if (!el) return
     if (document.fullscreenElement || document.webkitFullscreenElement) {
-      if (document.exitFullscreen) document.exitFullscreen()
-      else if (document.webkitExitFullscreen) document.webkitExitFullscreen()
+      // Leaving can fail too, and its failure used to be reported as "the browser refused full
+      // screen", because one document-level listener was carrying both meanings.
+      try {
+        const p = document.exitFullscreen ? document.exitFullscreen() : (document.webkitExitFullscreen && document.webkitExitFullscreen())
+        if (p && p.catch) p.catch(() => {})
+      } catch { /* already out; nothing to report */ }
       return
     }
     setVideoNote('')
+    enteringFullscreen.current = true
     // navigationUI: 'hide' asks for the browser's own interface to go away and the whole screen
     // to be given to the film. The default is 'auto', which leaves that decision to the browser,
     // and we were taking the default. It is a preference rather than an order, so it does not
@@ -1000,8 +1008,12 @@ export default function Home() {
       const p = el.requestFullscreen
         ? el.requestFullscreen({ navigationUI: 'hide' })
         : (el.webkitRequestFullscreen && el.webkitRequestFullscreen())
-      if (p && p.catch) p.catch(err => setVideoNote(`The browser turned down the full screen request (${err?.name || 'refused'}).`))
+      if (p && p.catch) p.catch(err => {
+        enteringFullscreen.current = false
+        setVideoNote(`The browser turned down the full screen request (${err?.name || 'refused'}).`)
+      })
     } catch (err) {
+      enteringFullscreen.current = false
       setVideoNote(`The browser turned down the full screen request (${err?.name || 'refused'}).`)
     }
   }
@@ -1009,6 +1021,7 @@ export default function Home() {
   useEffect(() => {
     const onChange = () => {
       const el = document.fullscreenElement || document.webkitFullscreenElement
+      enteringFullscreen.current = false
       setIsFullscreen(!!el)
       setBarVisible(true)
       if (!el) return
@@ -1019,7 +1032,13 @@ export default function Home() {
         setVideoNote(`Full screen did not fill the display. The window stayed ${Math.round(window.outerHeight)}px tall on a ${Math.round(window.screen.height)}px screen, so the picture is only as big as the page was.`)
       }
     }
-    const onError = () => setVideoNote('The browser turned down the full screen request for this page.')
+    // fullscreenerror is the only signal a browser that returns no promise gives, but it carries
+    // no sense of which request failed. It speaks only while one of ours is in flight.
+    const onError = () => {
+      if (!enteringFullscreen.current) return
+      enteringFullscreen.current = false
+      setVideoNote('The browser turned down the full screen request for this page.')
+    }
     document.addEventListener('fullscreenchange', onChange)
     document.addEventListener('webkitfullscreenchange', onChange)
     document.addEventListener('fullscreenerror', onError)
