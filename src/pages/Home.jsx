@@ -992,9 +992,14 @@ export default function Home() {
       return
     }
     setVideoNote('')
-    // A refused request used to do nothing at all and leave the button looking broken.
+    // navigationUI: 'hide' asks for the browser's own interface to go away and the whole screen
+    // to be given to the film. The default is 'auto', which leaves that decision to the browser,
+    // and we were taking the default. It is a preference rather than an order, so it does not
+    // override a browser that has its own reason to keep the window where it is.
     try {
-      const p = el.requestFullscreen ? el.requestFullscreen() : (el.webkitRequestFullscreen && el.webkitRequestFullscreen())
+      const p = el.requestFullscreen
+        ? el.requestFullscreen({ navigationUI: 'hide' })
+        : (el.webkitRequestFullscreen && el.webkitRequestFullscreen())
       if (p && p.catch) p.catch(err => setVideoNote(`This browser would not go full screen (${err?.name || 'refused'}). F11 makes the whole window full screen instead.`))
     } catch (err) {
       setVideoNote(`This browser would not go full screen (${err?.name || 'refused'}). F11 makes the whole window full screen instead.`)
@@ -1008,7 +1013,7 @@ export default function Home() {
       setBarVisible(true)
       if (!el) return
       if (!fullscreenIsReal({ outerHeight: window.outerHeight, screenHeight: window.screen.height })) {
-        setVideoNote('Your browser kept full screen inside the window rather than filling the display. Docked DevTools is the usual cause: close it, or move it to its own window, then try again.')
+        setVideoNote('Your browser kept full screen inside the window instead of filling the display. Docked DevTools is the usual cause, since Chrome will not take the window full screen while it is sharing it. Close DevTools, or undock it into its own window, and try again.')
       }
     }
     const onError = () => setVideoNote('This browser refused full screen for this page. F11 makes the whole window full screen instead.')
